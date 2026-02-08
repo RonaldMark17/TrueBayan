@@ -1,0 +1,39 @@
+body {
+  background: #f4f6f9;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.navbar {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.card {
+  border: none;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 6px 15px rgba(0, 0, 0, 0.08);
+  transition: 0.3s;
+}
+
+.card:hover {
+  transform: translateY(-6px);
+}
+
+.news-img {
+  height: 220px;
+  object-fit: cover;
+}
+
+.section-title {
+  font-weight: bold;
+  margin: 25px 0 15px;
+}
+
+.auth-box {
+  max-width: 400px;
+  margin: 80px auto;
+  padding: 25px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+}

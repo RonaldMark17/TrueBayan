@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ article.title }} - True Bayan</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,400&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --primary: #4F46E5;
+            --primary-dark: #4338ca;
+            --secondary: #ec4899;
+            --dark: #111827;
+            --text-body: #374151;
+            --light-bg: #f9fafb;
+            --white: #ffffff;
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            
+            /* Chatbot Variables */
+            --chat-width: 380px; 
+            --chat-height: 600px;
+        }
+
+        body {
+            background-color: var(--white);
+            color: var(--dark);
+            font-family: 'Inter', sans-serif;
+            line-height: 1.6;
+        }
+
+        /* Reading Progress Bar */
+        .progress-container {
+            position: fixed; top: 0; z-index: 1040; width: 100%; height: 4px; background: transparent;
+        }
+        .progress-bar {
+            height: 4px; background: var(--primary); width: 0%; transition: width 0.1s;
+        }
+
+        /* Navbar */
+        .navbar { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); border-bottom: 1px solid rgba(0,0,0,0.05); padding: 15px 0; }
+        .navbar-brand { font-weight: 800; font-size: 1.4rem; color: var(--dark) !important; letter-spacing: -0.5px; }
+        .navbar-brand i { color: var(--primary); }
+        .btn-back { color: var(--text-body); font-weight: 600; font-size: 0.9rem; border: 1px solid #e5e7eb; border-radius: 50px; padding: 6px 15px; transition: all 0.2s; text-decoration: none; }
+        .btn-back:hover { background: #f3f4f6; color: var(--dark); }
+
+        /* Article */
+        .article-wrapper { max-width: 740px; margin: 0 auto; padding: 40px 20px; }
+        .article-header { margin-bottom: 30px; text-align: center; }
+        .category-badge { display: inline-block; background: #e0e7ff; color: var(--primary); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; padding: 4px 12px; border-radius: 50px; letter-spacing: 1px; margin-bottom: 15px; }
+        .article-title { font-family: 'Merriweather', serif; font-size: 2.5rem; font-weight: 900; line-height: 1.25; color: var(--dark); margin-bottom: 20px; }
+        .article-meta { display: flex; justify-content: center; align-items: center; color: #6b7280; font-size: 0.9rem; gap: 15px; }
+        .meta-divider { color: #d1d5db; }
+        .hero-image-container { margin: 30px 0 50px 0; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-md); }
+        .article-image { width: 100%; height: auto; display: block; }
+
+        /* Content Body & Highlighting */
+        .article-content { font-family: 'Merriweather', serif; font-size: 1.125rem; line-height: 1.8; color: var(--text-body); }
+        .article-content p { margin-bottom: 2rem; display: block; }
+        
+        /* Drop Cap (Disabled when highlighting to prevent layout shifts) */
+        .article-content:not(.reading-mode) > p:first-of-type::first-letter {
+            font-size: 3.5em; font-weight: 700; float: left; line-height: 0.8; margin-right: 0.1em; color: var(--dark);
+        }
+
+        /* THE HIGHLIGHT STYLE */
+        .word-highlight {
+            background-color: #fde047; /* Yellow */
+            color: black;
+            border-radius: 3px;
+            box-shadow: 0 0 0 2px #fde047; /* Expands highlight slightly */
+            transition: background-color 0.1s;
+        }
+
+        /* Action Bar */
+        .action-bar { margin-top: 60px; padding-top: 30px; border-top: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; }
+        .btn-action { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 50px; font-weight: 600; font-size: 0.95rem; transition: all 0.2s; text-decoration: none; border: none; cursor: pointer; }
+        .btn-original { background: var(--dark); color: white; }
+        .btn-original:hover { background: black; color: white; transform: translateY(-2px); }
+        .btn-tool { background: white; color: var(--text-body); border: 1px solid #e5e7eb; }
+        .btn-tool:hover { border-color: var(--dark); color: var(--dark); }
+        .btn-tool.active { background: #e0e7ff; color: var(--primary); border-color: var(--primary); }
+
+        /* Audio Animation */
+        .playing-indicator { display: none; gap: 3px; align-items: flex-end; height: 15px; margin-left: 5px; }
+        .bar { width: 3px; background-color: var(--primary); animation: sound 0s -0.4s linear infinite alternate; }
+        @keyframes sound { 0% { height: 3px; opacity: .35; } 100% { height: 100%; opacity: 1; } }
+        .btn-tool.active .playing-indicator { display: flex; }
+        .btn-tool.active .bar { animation-duration: 0.4s; }
+
+        /* Chatbot CSS */
+        .chat-toggle-btn { position: fixed; bottom: 30px; right: 30px; width: 65px; height: 65px; background: linear-gradient(135deg, #4F46E5, #ec4899); border-radius: 50%; box-shadow: 0 10px 25px rgba(79, 70, 229, 0.4); display: flex; align-items: center; justify-content: center; color: white; font-size: 1.8rem; cursor: pointer; z-index: 9999; transition: all 0.3s; border: none; }
+        .chat-toggle-btn:hover { transform: scale(1.1); box-shadow: 0 15px 35px rgba(79, 70, 229, 0.5); }
+        .chat-popup { position: fixed; bottom: 110px; right: 30px; width: var(--chat-width); height: var(--chat-height); max-height: calc(100vh - 140px); background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(15px); border-radius: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); border: 1px solid rgba(255,255,255,0.5); display: flex; flex-direction: column; overflow: hidden; z-index: 9998; opacity: 0; transform: translateY(20px) scale(0.95); pointer-events: none; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); transform-origin: bottom right; }
+        .chat-popup.active { opacity: 1; transform: translateY(0) scale(1); pointer-events: all; }
+        .chat-header { background: linear-gradient(135deg, #4F46E5, #4338ca); padding: 20px; color: white; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+        .bot-avatar { width: 35px; height: 35px; background: rgba(255,255,255,0.2); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
+        .btn-close-chat { background: transparent; border: none; color: rgba(255,255,255,0.7); cursor: pointer; font-size: 1.1rem; }
+        .chat-body { flex-grow: 1; padding: 20px; overflow-y: auto; background: #f8fafc; display: flex; flex-direction: column; gap: 15px; }
+        .message-row { display: flex; gap: 10px; align-items: flex-end; animation: popIn 0.3s ease; }
+        .message-row.user { flex-direction: row-reverse; }
+        .msg-bubble { max-width: 80%; padding: 10px 15px; font-size: 0.9rem; line-height: 1.5; position: relative; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .message-row.bot .msg-bubble { background: white; color: #111827; border-radius: 15px 15px 15px 4px; border: 1px solid #e2e8f0; }
+        .message-row.user .msg-bubble { background: #4F46E5; color: white; border-radius: 15px 15px 4px 15px; }
+        .chat-footer { padding: 15px 20px; background: white; border-top: 1px solid #f1f5f9; }
+        .input-group-chat { display: flex; align-items: center; background: #f8fafc; border-radius: 25px; padding: 5px 5px 5px 15px; border: 1px solid #e2e8f0; }
+        .chat-input { border: none; background: transparent; flex-grow: 1; font-size: 0.95rem; outline: none; color: #111827; }
+        .btn-send { width: 35px; height: 35px; border-radius: 50%; background: #4F46E5; color: white; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; margin-left: 8px; }
+        @media (max-width: 480px) { .chat-popup { width: 100%; height: 100%; bottom: 0; right: 0; border-radius: 0; max-height: 100vh; } }
+    </style>
+</head>
+<body>
+
+    <div class="progress-container"><div class="progress-bar" id="myBar"></div></div>
+
+    <nav class="navbar sticky-top">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('dashboard') }}"><i class="fas fa-newspaper me-2"></i>True Bayan</a>
+            <a href="{{ url_for('dashboard') }}" class="btn btn-back" onclick="stopAudio()">
+                <i class="fas fa-times"></i> Close
+            </a>
+        </div>
+    </nav>
+
+    <div class="article-wrapper">
+        <header class="article-header">
+            {% if article.category %}
+                <span class="category-badge">{{ article.category }}</span>
+            {% endif %}
+            
+            <h1 class="article-title" id="articleTitle">{{ article.title }}</h1>
+            
+            <div class="article-meta">
+                <span><i class="far fa-clock me-1"></i> {{ article.cached_at.strftime('%B %d, %Y') if article.cached_at else 'Today' }}</span>
+                <span class="meta-divider">&bull;</span>
+                <span>5 min read</span>
+            </div>
+        </header>
+
+        {% if article.image_url %}
+        <div class="hero-image-container">
+            <img src="{{ article.image_url }}" class="article-image" alt="{{ article.title }}" onerror="this.style.display='none'">
+        </div>
+        {% endif %}
+
+        <article class="article-content" id="articleContent">
+            {% if article.content %}
+                <p>
+                {# Logic: Convert linebreaks to paragraphs #}
+                {{ article.content
+                    |replace('</div>', '\n\n')
+                    |replace('</p>', '\n\n')
+                    |replace('<br>', '\n')
+                    |striptags
+                    |replace('\n\n', '</p><p>')
+                    |replace('\n', '<br>')
+                    |safe 
+                }}
+                </p>
+            {% else %}
+                <p>This content is currently unavailable. Please view the original source.</p>
+            {% endif %}
+        </article>
+
+        <input type="hidden" id="originalTitle" value="{{ article.title }}">
+        <input type="hidden" id="originalContent" value="{{ article.content|striptags|replace('\n', ' ')|safe }}">
+        <input type="hidden" id="translatedTitle" value="">
+        <input type="hidden" id="translatedContent" value="">
+
+        <div class="action-bar">
+            <div class="d-flex gap-2 flex-wrap justify-content-center">
+                <button class="btn-action btn-tool" id="btnTranslate" onclick="toggleTranslation()">
+                    <i class="fas fa-language"></i> 
+                    <span id="txtTranslate">Translate to Tagalog</span>
+                </button>
+
+                <button class="btn-action btn-tool" id="btnListen" onclick="toggleSpeech()">
+                    <i class="fas fa-volume-up" id="iconListen"></i> 
+                    <span id="txtListen">Listen</span>
+                    <div class="playing-indicator">
+                        <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+                    </div>
+                </button>
+
+                <button class="btn-action btn-tool" onclick="shareArticle()">
+                    <i class="fas fa-share-alt"></i> Share
+                </button>
+            </div>
+            
+            <button class="btn-action btn-original" onclick="window.open('{{ article.url }}', '_blank')">
+                Original Source <i class="fas fa-external-link-alt ms-1"></i>
+            </button>
+        </div>
+    </div>
+
+    <button class="chat-toggle-btn" id="chatToggle" onclick="toggleChat()">
+        <i class="fas fa-comment-dots" id="toggleIcon"></i>
+    </button>
+    <div class="chat-popup" id="chatPopup">
+        <div class="chat-header">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <div class="bot-avatar"><i class="fas fa-robot"></i></div>
+                <div><h5 style="margin:0; font-weight:700;">True Bayan AI</h5><span style="font-size:0.75rem; opacity:0.8;">Online</span></div>
+            </div>
+            <button class="btn-close-chat" onclick="toggleChat()"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="chat-body" id="chatBody">
+            <div class="message-row bot"><div class="msg-bubble">Hello! 👋 I can help you check news credibility or answer questions.</div></div>
+        </div>
+        <div class="chat-footer">
+            <form class="input-group-chat" onsubmit="handleChatSubmit(event)">
+                <input type="text" class="chat-input" id="chatInput" placeholder="Type a message..." autocomplete="off">
+                <button type="submit" class="btn-send"><i class="fas fa-paper-plane" style="font-size: 0.9rem;"></i></button>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // --- 1. GLOBAL VARIABLES ---
+        let currentLang = 'en';
+        let originalHtml = ""; 
+        let wordSpans = []; 
+        let tagalogInterval = null; 
+        let synth = window.speechSynthesis;
+        let apiAudio = null;
+
+        const titleEl = document.getElementById('articleTitle');
+        const contentEl = document.getElementById('articleContent');
+        const btnTranslate = document.getElementById('btnTranslate');
+        const txtTranslate = document.getElementById('txtTranslate');
+        const btnListen = document.getElementById('btnListen');
+        const iconListen = document.getElementById('iconListen');
+        const txtListen = document.getElementById('txtListen');
+
+        // Store original structure on load
+        window.addEventListener('DOMContentLoaded', () => {
+            originalHtml = contentEl.innerHTML;
+        });
+
+        // --- 2. HIGHLIGHTING UTILITIES ---
+        function setupWordSpans(text) {
+            contentEl.classList.add('reading-mode'); // Disable Dropcap
+            const paragraphs = text.split('\n').filter(p => p.trim() !== '');
+            contentEl.innerHTML = ''; 
+            wordSpans = []; 
+            paragraphs.forEach(paraText => {
+                const p = document.createElement('p');
+                const words = paraText.split(' ');
+                words.forEach(word => {
+                    const span = document.createElement('span');
+                    span.textContent = word + ' ';
+                    span.className = 'word-span';
+                    p.appendChild(span);
+                    wordSpans.push(span);
+                });
+                contentEl.appendChild(p);
+            });
+        }
+
+        function clearHighlights() {
+            document.querySelectorAll('.word-highlight').forEach(el => el.classList.remove('word-highlight'));
+        }
+
+        function resetContent() {
+            if(currentLang === 'en') {
+                contentEl.innerHTML = originalHtml;
+            } else {
+                const transContent = document.getElementById('translatedContent').value;
+                contentEl.innerHTML = `<p>${transContent}</p>`;
+            }
+            contentEl.classList.remove('reading-mode'); 
+            wordSpans = [];
+        }
+
+        // --- 3. SPEECH LOGIC ---
+        function stopAudio() {
+            if (synth.speaking) synth.cancel();
+            if (apiAudio) {
+                apiAudio.pause();
+                apiAudio.currentTime = 0;
+                apiAudio = null;
+            }
+            if (tagalogInterval) clearInterval(tagalogInterval);
+            
+            resetListenBtn();
+            resetContent(); 
+        }
+
+        // FIX: Ensure stopping on page unload/navigate
+        window.onbeforeunload = function() {
+            stopAudio();
+        };
+
+        async function toggleSpeech() {
+            if (synth.speaking || (apiAudio && !apiAudio.paused) || btnListen.classList.contains('active')) {
+                stopAudio();
+                return;
+            }
+
+            btnListen.classList.add('active');
+            iconListen.className = "fas fa-spinner fa-spin";
+            txtListen.textContent = "Loading...";
+
+            let textToRead = "";
+            if(currentLang === 'en') {
+                textToRead = document.getElementById('originalContent').value;
+            } else {
+                textToRead = document.getElementById('translatedContent').value;
+            }
+            
+            setupWordSpans(textToRead);
+
+            if (currentLang === 'tl') {
+                try {
+                    const response = await fetch('/api/speak', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: textToRead, lang: 'tl' })
+                    });
+
+                    if (!response.ok) throw new Error("TTS API failed");
+
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    
+                    apiAudio = new Audio(url);
+                    
+                    apiAudio.onloadedmetadata = function() {
+                        const duration = apiAudio.duration;
+                        const totalWords = wordSpans.length;
+                        const intervalTime = (duration / totalWords) * 1000; // ms
+                        let currentWordIndex = 0;
+                        apiAudio.play();
+                        tagalogInterval = setInterval(() => {
+                            clearHighlights();
+                            if(currentWordIndex < totalWords) {
+                                wordSpans[currentWordIndex].classList.add('word-highlight');
+                                // wordSpans[currentWordIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                currentWordIndex++;
+                            } else {
+                                clearInterval(tagalogInterval);
+                            }
+                        }, intervalTime);
+                    };
+
+                    apiAudio.onended = () => stopAudio();
+                    iconListen.className = "fas fa-stop";
+                    txtListen.textContent = "Stop";
+                    
+                } catch (e) {
+                    console.error(e);
+                    alert("Audio generation failed.");
+                    stopAudio();
+                }
+
+            } else {
+                const utterance = new SpeechSynthesisUtterance(textToRead);
+                utterance.lang = 'en-US';
+                
+                utterance.onboundary = function(event) {
+                    if (event.name === 'word') {
+                        const textBefore = textToRead.substring(0, event.charIndex);
+                        const wordIndex = textBefore.split(' ').length - 1;
+                        if (wordSpans[wordIndex]) {
+                            clearHighlights();
+                            wordSpans[wordIndex].classList.add('word-highlight');
+                        }
+                    }
+                };
+
+                utterance.onend = () => stopAudio();
+                iconListen.className = "fas fa-stop";
+                txtListen.textContent = "Stop";
+                synth.speak(utterance);
+            }
+        }
+
+        function resetListenBtn() {
+            btnListen.classList.remove('active');
+            iconListen.className = "fas fa-volume-up";
+            txtListen.textContent = "Listen";
+        }
+
+        // --- 4. TRANSLATION LOGIC ---
+        async function toggleTranslation() {
+            stopAudio(); 
+
+            if (currentLang === 'en') {
+                btnTranslate.disabled = true;
+                txtTranslate.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Translating...';
+                
+                try {
+                    let transTitle = document.getElementById('translatedTitle').value;
+                    let transContent = document.getElementById('translatedContent').value;
+
+                    if (!transTitle) {
+                        const bodyText = document.getElementById('originalContent').value;
+                        const titleText = document.getElementById('originalTitle').value;
+                        
+                        const response = await fetch('/translate_article', { 
+                           method: 'POST', headers: { 'Content-Type': 'application/json' },
+                           body: JSON.stringify({ text: bodyText }) 
+                        });
+                        const data = await response.json();
+                        if (data.error) throw new Error(data.error);
+
+                        transContent = data.translated_text;
+                        transTitle = titleText; 
+                        
+                        document.getElementById('translatedTitle').value = transTitle;
+                        document.getElementById('translatedContent').value = transContent;
+                    }
+
+                    titleEl.textContent = transTitle;
+                    contentEl.innerHTML = `<p>${transContent}</p>`;
+                    
+                    currentLang = 'tl';
+                    txtTranslate.textContent = "Show Original";
+                    btnTranslate.classList.add('active');
+
+                } catch (error) {
+                    console.error(error);
+                    alert("Translation failed.");
+                    txtTranslate.textContent = "Translate to Tagalog";
+                } finally {
+                    btnTranslate.disabled = false;
+                }
+
+            } else {
+                titleEl.textContent = document.getElementById('originalTitle').value;
+                contentEl.innerHTML = originalHtml;
+                currentLang = 'en';
+                txtTranslate.textContent = "Translate to Tagalog";
+                btnTranslate.classList.remove('active');
+            }
+        }
+
+        // Scroll Progress
+        window.onscroll = function() {
+            var winScroll = document.body.scrollTop || document.documentElement.scrollTop;
+            var height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+            var scrolled = (winScroll / height) * 100;
+            document.getElementById("myBar").style.width = scrolled + "%";
+        };
+
+        // --- CHATBOT ---
+        const chatPopup = document.getElementById('chatPopup');
+        const toggleIcon = document.getElementById('toggleIcon');
+        const chatBody = document.getElementById('chatBody');
+        const chatInput = document.getElementById('chatInput');
+        let isChatOpen = false;
+
+        function toggleChat() {
+            isChatOpen = !isChatOpen;
+            if (isChatOpen) {
+                chatPopup.classList.add('active');
+                toggleIcon.className = 'fas fa-chevron-down';
+                setTimeout(() => chatInput.focus(), 300);
+            } else {
+                chatPopup.classList.remove('active');
+                toggleIcon.className = 'fas fa-comment-dots';
+            }
+        }
+
+        async function handleChatSubmit(e) {
+            e.preventDefault();
+            const message = chatInput.value.trim();
+            if (!message) return;
+            appendMessage(message, 'user');
+            chatInput.value = '';
+            
+            const loadingId = 'loading-' + Date.now();
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message-row bot';
+            loadingDiv.id = loadingId;
+            loadingDiv.innerHTML = `<div class="msg-bubble">...</div>`;
+            chatBody.appendChild(loadingDiv);
+            chatBody.scrollTop = chatBody.scrollHeight;
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+                const data = await response.json();
+                document.getElementById(loadingId).remove();
+                appendMessage(data.response, 'bot');
+            } catch (error) {
+                document.getElementById(loadingId).remove();
+                appendMessage("Connection error.", 'bot');
+            }
+        }
+
+        function appendMessage(text, sender) {
+            const div = document.createElement('div');
+            div.className = `message-row ${sender}`;
+            div.innerHTML = `<div class="msg-bubble">${text.replace(/\n/g, '<br>')}</div>`;
+            chatBody.appendChild(div);
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+
+        function shareArticle() {
+            if (navigator.share) { navigator.share({ title: '{{ article.title }}', url: window.location.href }); }
+            else { navigator.clipboard.writeText(window.location.href); alert('Link copied!'); }
+        }
+    </script>
+</body>
+</html>
