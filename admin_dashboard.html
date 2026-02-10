@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Admin Dashboard - True Bayan</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+            rel="stylesheet">
+        <link rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <link
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap"
+            rel="stylesheet">
+
+        <style>
+        :root {
+            /* Modern Color Palette */
+            --primary: #4F46E5;
+            --primary-dark: #4338ca;
+            --secondary: #ec4899;
+            --dark: #111827;
+            --text-body: #4b5563;
+            --light-bg: #f3f4f6;
+            --white: #ffffff;
+            
+            /* Admin Specific Colors */
+            --admin-dark: #1e1b4b;
+            --danger: #ef4444;
+            --success: #10b981;
+            --warning: #f59e0b;
+            
+            --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        body {
+            background-color: var(--light-bg);
+            font-family: 'Inter', sans-serif;
+            color: var(--dark);
+            line-height: 1.6;
+        }
+
+        /* --- Navbar --- */
+        .navbar {
+            background: var(--admin-dark);
+            padding: 15px 0;
+            box-shadow: var(--shadow-md);
+        }
+
+        .navbar-brand {
+            font-weight: 800;
+            font-size: 1.5rem;
+            color: white !important;
+            letter-spacing: -0.5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .badge-admin {
+            background: rgba(255,255,255,0.1);
+            font-size: 0.7rem;
+            padding: 4px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .nav-link {
+            color: rgba(255,255,255,0.7) !important;
+            font-weight: 500;
+            font-size: 0.95rem;
+            margin: 0 8px;
+            transition: color 0.2s;
+        }
+
+        .nav-link:hover, .nav-link.active {
+            color: white !important;
+        }
+
+        .btn-logout {
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white;
+            border-radius: 50px;
+            padding: 6px 20px;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        .btn-logout:hover { background: rgba(255,255,255,0.1); border-color: white; }
+
+        /* --- Header --- */
+        .admin-header {
+            background: white;
+            padding: 40px 0;
+            border-bottom: 1px solid #e5e7eb;
+            margin-bottom: 40px;
+        }
+
+        .page-title {
+            font-weight: 800;
+            color: var(--dark);
+            margin: 0;
+            font-size: 1.8rem;
+        }
+
+        /* --- Stats Grid --- */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 16px;
+            padding: 25px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid #e5e7eb;
+            transition: transform 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .stat-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+
+        .stat-info h3 {
+            font-size: 2rem;
+            font-weight: 800;
+            margin: 0;
+            color: var(--dark);
+            line-height: 1.2;
+        }
+
+        .stat-info p {
+            margin: 0;
+            font-size: 0.85rem;
+            color: #6b7280;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .stat-icon {
+            width: 50px; height: 50px;
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .bg-icon-primary { background: #e0e7ff; color: var(--primary); }
+        .bg-icon-danger { background: #fee2e2; color: var(--danger); }
+        .bg-icon-dark { background: #f3f4f6; color: var(--dark); }
+        .bg-icon-success { background: #d1fae5; color: var(--success); }
+
+        /* --- Main Content Area --- */
+        .content-card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid #e5e7eb;
+            overflow: hidden;
+            min-height: 600px;
+        }
+
+        /* Tabs */
+        .nav-tabs {
+            border-bottom: 1px solid #e5e7eb;
+            padding: 0 20px;
+            background: #f9fafb;
+        }
+
+        .nav-tabs .nav-link {
+            border: none;
+            color: #6b7280 !important;
+            font-weight: 600;
+            padding: 20px 25px;
+            background: transparent !important;
+            border-bottom: 3px solid transparent;
+            margin: 0;
+        }
+
+        .nav-tabs .nav-link:hover { color: var(--primary) !important; }
+
+        .nav-tabs .nav-link.active {
+            color: var(--primary) !important;
+            border-bottom-color: var(--primary);
+        }
+
+        .tab-content { padding: 0; }
+        
+        .tab-pane { padding: 30px; }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+
+        .section-title { font-size: 1.25rem; font-weight: 700; margin: 0; }
+
+        /* Tables */
+        .table-responsive { border-radius: 12px; border: 1px solid #e5e7eb; }
+        
+        .table { margin-bottom: 0; }
+        
+        .table thead th {
+            background: #f9fafb;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #6b7280;
+            font-weight: 700;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .table tbody td {
+            padding: 15px 20px;
+            vertical-align: middle;
+            font-size: 0.9rem;
+            color: var(--dark);
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .table tbody tr:last-child td { border-bottom: none; }
+
+        /* Badges & Buttons */
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .status-fake { background: #fee2e2; color: #991b1b; }
+        .status-sus { background: #ffedd5; color: #9a3412; }
+        .status-safe { background: #d1fae5; color: #065f46; }
+        .status-active { background: #e0e7ff; color: #3730a3; }
+        .status-banned { background: #f3f4f6; color: #4b5563; }
+
+        .btn-action {
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border: none;
+            transition: all 0.2s;
+        }
+
+        .btn-ban { background: #fee2e2; color: #ef4444; }
+        .btn-ban:hover { background: #ef4444; color: white; }
+        
+        .btn-allow { background: #d1fae5; color: #10b981; }
+        .btn-allow:hover { background: #10b981; color: white; }
+
+        /* Avatar placeholder */
+        .user-avatar {
+            width: 35px; height: 35px;
+            background: var(--primary);
+            color: white;
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+            margin-right: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+            .nav-tabs { overflow-x: auto; flex-wrap: nowrap; }
+            .nav-tabs .nav-link { white-space: nowrap; }
+        }
+    </style>
+    </head>
+    <body>
+
+        <nav class="navbar navbar-expand-lg sticky-top">
+            <div class="container">
+                <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+                    <i class="fas fa-newspaper"></i>
+                    True Bayan
+                    <span class="badge-admin">Admin Portal</span>
+                </a>
+                <button class="navbar-toggler border-0" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="fas fa-bars text-white"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav ms-auto align-items-center">
+                        <li class="nav-item"><a class="nav-link"
+                                href="{{ url_for('dashboard') }}">Main
+                                Site</a></li>
+                        <li class="nav-item"><a class="nav-link"
+                                href="{{ url_for('fake_news_tracker') }}">Tracker</a></li>
+                        <li class="nav-item ms-lg-3">
+                            <a class="btn btn-logout"
+                                href="{{ url_for('logout') }}">
+                                <i class="fas fa-sign-out-alt me-1"></i> Logout
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+
+        <div class="admin-header">
+            <div class="container">
+                <h1 class="page-title">Dashboard Overview</h1>
+                <p class="text-muted mb-0">Monitor system activity, manage
+                    users, and moderate content.</p>
+            </div>
+        </div>
+
+        <div class="container pb-5">
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-info">
+                        <h3>{{ total_users }}</h3>
+                        <p>Registered Users</p>
+                    </div>
+                    <div class="stat-icon bg-icon-primary"><i
+                            class="fas fa-users"></i></div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-info">
+                        <h3>{{ total_reports }}</h3>
+                        <p>Total Reports</p>
+                    </div>
+                    <div class="stat-icon bg-icon-danger"><i
+                            class="fas fa-exclamation-triangle"></i></div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-info">
+                        <h3>{{ blacklisted_sources }}</h3>
+                        <p>Blacklisted URLs</p>
+                    </div>
+                    <div class="stat-icon bg-icon-dark"><i
+                            class="fas fa-ban"></i></div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-info">
+                        <h3>{{ total_saved }}</h3>
+                        <p>Saved Articles</p>
+                    </div>
+                    <div class="stat-icon bg-icon-success"><i
+                            class="fas fa-bookmark"></i></div>
+                </div>
+            </div>
+
+            <div class="content-card">
+                <ul class="nav nav-tabs" id="adminTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="users-tab"
+                            data-bs-toggle="tab" data-bs-target="#users"
+                            type="button" role="tab">
+                            <i class="fas fa-users me-2"></i>User Management
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="reports-tab"
+                            data-bs-toggle="tab" data-bs-target="#reports"
+                            type="button" role="tab">
+                            <i class="fas fa-flag me-2"></i>Fake News Reports
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="sources-tab"
+                            data-bs-toggle="tab" data-bs-target="#sources"
+                            type="button" role="tab">
+                            <i class="fas fa-globe me-2"></i>Source Blacklist
+                        </button>
+                    </li>
+                </ul>
+
+                <div class="tab-content" id="adminTabsContent">
+
+                    <div class="tab-pane fade show active" id="users"
+                        role="tabpanel">
+                        <div class="section-header">
+                            <h4 class="section-title">All Registered Users</h4>
+                            <button class="btn btn-sm btn-outline-secondary"><i
+                                    class="fas fa-download me-1"></i> Export
+                                CSV</button>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>User</th>
+                                        <th>Email Address</th>
+                                        <th>Date Joined</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for user in users %}
+                                    <tr>
+                                        <td>
+                                            <div
+                                                class="d-flex align-items-center">
+                                                <div class="user-avatar">{{
+                                                    user.username[0]|upper
+                                                    }}</div>
+                                                <span class="fw-bold">{{
+                                                    user.username }}</span>
+                                            </div>
+                                        </td>
+                                        <td>{{ user.email }}</td>
+                                        <td>{{
+                                            user.created_at.strftime('%b %d, %Y')
+                                            }}</td>
+                                        <td><span
+                                                class="status-badge status-active">Active</span></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="reports" role="tabpanel">
+                        <div class="section-header">
+                            <h4 class="section-title">Recent Flagged
+                                Content</h4>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Article Title</th>
+                                        <th>Reported By</th>
+                                        <th>Detection Label</th>
+                                        <th>Confidence</th>
+                                        <th>AI Score</th>
+                                        <th>Date</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for report in all_reports %}
+                                    <tr>
+                                        <td class="fw-bold text-truncate"
+                                            style="max-width: 250px;"
+                                            title="{{ report.article_title }}">
+                                            {{ report.article_title or
+                                            'Untitled Article' }}
+                                        </td>
+                                        <td>{{ report.username }}</td>
+                                        <td>
+                                            <span
+                                                class="status-badge status-{{ 'fake' if report.detection_label == 'FAKE' else ('sus' if report.detection_label == 'SUSPICIOUS' else 'safe') }}">
+                                                <i
+                                                    class="fas fa-{{ 'times' if report.detection_label == 'FAKE' else ('exclamation' if report.detection_label == 'SUSPICIOUS' else 'check') }}"></i>
+                                                {{ report.detection_label }}
+                                            </span>
+                                        </td>
+                                        <td>{{ report.confidence_score }}%</td>
+                                        <td><strong>{{ report.ai_score
+                                                }}</strong>/10</td>
+                                        <td class="text-muted small">{{
+                                            report.reported_at.strftime('%b %d, %H:%M')
+                                            }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="sources" role="tabpanel">
+                        <div class="section-header">
+                            <h4 class="section-title">Blacklisted Domains</h4>
+                            <p class="text-muted small mb-0">Manage sources that
+                                are automatically flagged as unreliable.</p>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Domain / URL</th>
+                                        <th>Report Count</th>
+                                        <th>Avg. Confidence</th>
+                                        <th>Current Status</th>
+                                        <th class="text-end">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for source in all_sources %}
+                                    <tr>
+                                        <td class="fw-bold">{{ source.domain or
+                                            source.source_url[:40] }}</td>
+                                        <td>{{ source.report_count }}</td>
+                                        <td>{{ source.avg_confidence }}%</td>
+                                        <td>
+                                            {% if source.is_blacklisted %}
+                                            <span
+                                                class="status-badge status-fake">Blacklisted</span>
+                                            {% else %}
+                                            <span
+                                                class="status-badge status-active">Active</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            {% if source.is_blacklisted %}
+                                            <button class="btn-action btn-allow"
+                                                onclick="toggleBlacklist({{ source.id }}, 'whitelist')">
+                                                <i
+                                                    class="fas fa-check me-1"></i>
+                                                Whitelist
+                                            </button>
+                                            {% else %}
+                                            <button class="btn-action btn-ban"
+                                                onclick="toggleBlacklist({{ source.id }}, 'blacklist')">
+                                                <i class="fas fa-ban me-1"></i>
+                                                Blacklist
+                                            </button>
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <script
+            src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+        <script>
+        function toggleBlacklist(sourceId, action) {
+            if(!confirm(`Are you sure you want to ${action} this source?`)) return;
+
+            fetch('/admin/blacklist_source', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source_id: sourceId, action: action })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    location.reload();
+                } else {
+                    alert('Action failed');
+                }
+            });
+        }
+    </script>
+    </body>
+</html>
