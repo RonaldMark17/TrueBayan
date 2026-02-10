@@ -30,6 +30,62 @@ def get_db():
     )
 
 # ---------- FUNCTIONS ----------
+
+# NEW FUNCTION: Attach database counts to NewsAPI articles
+def attach_social_data(articles, current_user_id=None):
+    """
+    Takes a list of NewsAPI articles and adds 'likes', 'saves', 
+    'user_liked', and 'user_saved' properties from the local DB.
+    """
+    if not articles:
+        return []
+
+    # Get all URLs from the articles
+    urls = [a.get('url') for a in articles if a.get('url')]
+    
+    if not urls:
+        return articles
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Prepare SQL placeholders
+    format_strings = ','.join(['%s'] * len(urls))
+
+    # 1. Get Global Like Counts
+    cursor.execute(f"SELECT article_url, COUNT(*) FROM article_likes WHERE article_url IN ({format_strings}) GROUP BY article_url", urls)
+    like_counts = dict(cursor.fetchall())
+
+    # 2. Get Global Save Counts
+    cursor.execute(f"SELECT url, COUNT(*) FROM saved_articles WHERE url IN ({format_strings}) GROUP BY url", urls)
+    save_counts = dict(cursor.fetchall())
+
+    # 3. Check User Specific Actions (if logged in)
+    user_likes = set()
+    user_saves = set()
+    
+    if current_user_id:
+        # Check likes
+        cursor.execute(f"SELECT article_url FROM article_likes WHERE user_id = %s AND article_url IN ({format_strings})", [current_user_id] + urls)
+        user_likes = set(row[0] for row in cursor.fetchall())
+        
+        # Check saves
+        cursor.execute(f"SELECT url FROM saved_articles WHERE user_id = %s AND url IN ({format_strings})", [current_user_id] + urls)
+        user_saves = set(row[0] for row in cursor.fetchall())
+
+    cursor.close()
+    conn.close()
+
+    # Attach data to article objects
+    for a in articles:
+        url = a.get('url')
+        a['likes'] = like_counts.get(url, 0)
+        a['saves'] = save_counts.get(url, 0)
+        a['user_liked'] = url in user_likes
+        a['user_saved'] = url in user_saves
+
+    return articles
+
 def is_philippine_news(article):
     """Check if article is related to Philippines"""
     philippine_keywords = [
@@ -64,14 +120,10 @@ def detect_fake_news_advanced(text, url=""):
     sentiment = blob.sentiment
     reasons = []
     
-    # ---------------------------------------------------------
     # 1. BASELINE RISK (Start at 50 - Neutral/Unsure)
-    # ---------------------------------------------------------
     risk_score = 50 
     
-    # ---------------------------------------------------------
     # 2. DOMAIN CHECK (The strongest signal)
-    # ---------------------------------------------------------
     trusted_domains = [
         'rappler.com', 'inquirer.net', 'abs-cbn.com', 'gma.network', 'philstar.com', 
         'cnnphilippines.com', 'manilabulletin.com', 'bworldonline.com', 'pna.gov.ph',
@@ -90,12 +142,7 @@ def detect_fake_news_advanced(text, url=""):
         risk_score += 10  # Slight suspicion for unknown sites -> Rises to ~60 Risk
         reasons.append("Source unverified (Proceed with caution)")
 
-    # ---------------------------------------------------------
     # 3. AI SENTIMENT ANALYSIS (Reality Check)
-    # ---------------------------------------------------------
-    # Fake news is usually Highly Subjective (Opinion) AND Negative.
-    # Real news is usually Objective (Fact) or Neutral.
-    
     if sentiment.subjectivity > 0.6:
         if sentiment.polarity < -0.2:
             risk_score += 20
@@ -112,9 +159,7 @@ def detect_fake_news_advanced(text, url=""):
         risk_score += 15
         reasons.append("Extreme Emotional Language")
 
-    # ---------------------------------------------------------
     # 4. KEYWORD & PATTERN ANALYSIS
-    # ---------------------------------------------------------
     high_risk_keywords = [
         "hoax", "conspiracy", "exposed", "secret", "shocking", 
         "censored", "mainstream media", "government lies", "debunked",
@@ -138,10 +183,7 @@ def detect_fake_news_advanced(text, url=""):
         risk_score += 10
         reasons.append(f"Clickbait style: '{found_clickbait[0]}'")
 
-    # ---------------------------------------------------------
     # 5. REALITY SCORING FORMULA
-    # ---------------------------------------------------------
-    
     # Clamp Risk Score (0 = Safe, 100 = Fake)
     final_risk = min(100, max(0, risk_score))
     
@@ -150,10 +192,6 @@ def detect_fake_news_advanced(text, url=""):
     ai_score = round(final_risk / 10, 1)
 
     # CONFIDENCE CALCULATION
-    # - If Risk is 0 (Credible) -> Confidence is 100%
-    # - If Risk is 100 (Fake) -> Confidence is 100%
-    # - If Risk is 50 (Unsure) -> Confidence is 0%
-    
     confidence = abs(final_risk - 50) * 2
     
     # Boost confidence if we have a lot of text to analyze
@@ -217,18 +255,13 @@ def detect_category(title, description):
     return 'General'
 
 def translate_text(text, target='tl'):
-    """
-    Translates text using the unofficial free Google Translate API.
-    'tl' is the code for Tagalog/Filipino.
-    """
     try:
-        # The library handles the request to Google Translate
         translator = GoogleTranslator(source='auto', target=target)
         result = translator.translate(text)
         return result
     except Exception as e:
         print(f"Translation library error: {e}")
-        return text # Return original text if translation fails
+        return text
 
 @app.route('/translate_article', methods=['POST'])
 def translate_article():
@@ -239,8 +272,6 @@ def translate_article():
         if not original_content:
             return jsonify({'error': 'No text provided'}), 400
 
-        # Note: Free libraries have character limits per request (usually ~5000 chars).
-        # For a simple project, we just limit the input to ensure it works.
         safe_content = original_content[:4500] 
         
         translated_content = translate_text(safe_content, target='tl')
@@ -254,7 +285,6 @@ def translate_article():
         print(f"Server Error: {e}")
         return jsonify({'error': str(e)}), 500
     
-    
 @app.route('/api/speak', methods=['POST'])
 def api_speak():
     try:
@@ -265,7 +295,6 @@ def api_speak():
         if not text:
             return jsonify({'error': 'No text provided'}), 400
 
-        # gTTS provides high-quality native Tagalog ('tl')
         tts = gTTS(text=text, lang=lang)
         
         audio_fp = BytesIO()
@@ -276,6 +305,94 @@ def api_speak():
     except Exception as e:
         print(f"TTS Error: {e}")
         return jsonify({'error': str(e)}), 500
+    
+# ---------- LIKE / UNLIKE SYSTEM ----------
+@app.route("/toggle_like", methods=["POST"])
+def toggle_like():
+    if 'user_id' not in session:
+        return jsonify({"status": "error", "message": "Not logged in"}), 401
+    
+    data = request.get_json()
+    url = data.get('url')
+    user_id = session['user_id']
+    
+    if not url:
+        return jsonify({"status": "error", "message": "URL is required"}), 400
+
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        # Check if already liked
+        cursor.execute("SELECT id FROM article_likes WHERE user_id = %s AND article_url = %s", (user_id, url))
+        liked = cursor.fetchone()
+        
+        if liked:
+            cursor.execute("DELETE FROM article_likes WHERE id = %s", (liked['id'],))
+            action = "unliked"
+        else:
+            cursor.execute("INSERT INTO article_likes (user_id, article_url) VALUES (%s, %s)", (user_id, url))
+            action = "liked"
+            
+        conn.commit()
+        return jsonify({"status": "success", "action": action})
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.route("/check_likes", methods=["POST"])
+def check_likes():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({"liked_urls": []})
+    
+    urls = request.get_json().get('urls', [])
+    if not urls:
+        return jsonify({"liked_urls": []})
+
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    format_strings = ','.join(['%s'] * len(urls))
+    query = f"SELECT article_url FROM article_likes WHERE user_id = %s AND article_url IN ({format_strings})"
+    
+    cursor.execute(query, [user_id] + urls)
+    liked_urls = [row[0] for row in cursor.fetchall()]
+    
+    cursor.close()
+    conn.close()
+    return jsonify({"liked_urls": liked_urls})
+
+# ---------- SUMMARIZER API ----------
+@app.route('/api/summarize', methods=['POST'])
+def api_summarize():
+    try:
+        data = request.json
+        text = data.get('text', '')
+
+        if not text or len(text) < 100:
+            return jsonify({'summary': "Content is too short to summarize effectively."})
+
+        summary_text = summarize_advanced(text)
+        
+        return jsonify({
+            'status': 'success',
+            'summary': summary_text
+        })
+    except Exception as e:
+        print(f"Summarizer Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+def summarize_advanced(text, count=3):
+    text = " ".join(text.split())
+    import re
+    sentences = re.split(r'(?<=[.!?]) +', text)
+    
+    if len(sentences) <= count:
+        return text
+    
+    summary = " ".join(sentences[:count])
+    return summary
 
 # ---------- TOGGLE SAVE/UNSAVE ----------
 @app.route("/toggle_save", methods=["POST"])
@@ -289,7 +406,6 @@ def toggle_save():
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
-    # Check if already saved
     cursor.execute(
         "SELECT id FROM saved_articles WHERE user_id = %s AND url = %s",
         (session['user_id'], url)
@@ -297,7 +413,6 @@ def toggle_save():
     existing = cursor.fetchone()
     
     if existing:
-        # Unsave
         cursor.execute(
             "DELETE FROM saved_articles WHERE id = %s",
             (existing['id'],)
@@ -307,7 +422,6 @@ def toggle_save():
         conn.close()
         return jsonify({"status": "success", "action": "unsaved", "message": "Removed from saved"})
     else:
-        # Save
         cursor.execute(
             "INSERT INTO saved_articles (user_id, title, url) VALUES (%s, %s, %s)",
             (session['user_id'], title, url)
@@ -317,7 +431,6 @@ def toggle_save():
         conn.close()
         return jsonify({"status": "success", "action": "saved", "message": "Added to saved"})
 
-# ---------- CHECK IF ARTICLE IS SAVED ----------
 @app.route("/check_saved", methods=["POST"])
 def check_saved():
     if 'user_id' not in session:
@@ -337,6 +450,27 @@ def check_saved():
     
     return jsonify({"saved": is_saved})
 
+# ---------- USER STATS ENDPOINT (NEW) ----------
+@app.route("/get_user_stats")
+def get_user_stats():
+    if 'user_id' not in session:
+        return jsonify({"saved_count": 0, "liked_count": 0})
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM saved_articles WHERE user_id = %s", (session['user_id'],))
+    saved_count = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM article_likes WHERE user_id = %s", (session['user_id'],))
+    liked_count = cursor.fetchone()[0]
+    
+    cursor.close()
+    conn.close()
+    
+    return jsonify({"saved_count": saved_count, "liked_count": liked_count})
+
+
 # ---------- ARTICLE READER ----------
 @app.route("/read_article")
 def read_article():
@@ -350,7 +484,6 @@ def read_article():
         flash("No article URL provided", "danger")
         return redirect(url_for('dashboard'))
     
-    # Check cache first
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM article_cache WHERE url = %s", (url,))
@@ -359,7 +492,6 @@ def read_article():
     if cached:
         article = cached
     else:
-        # Fetch and parse article
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -367,18 +499,14 @@ def read_article():
             response = requests.get(url, headers=headers, timeout=10)
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Extract content (basic extraction)
             paragraphs = soup.find_all('p')
             content = '\n\n'.join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 50])
             
-            # Try to find image
             img_tag = soup.find('meta', property='og:image')
             image_url = img_tag['content'] if img_tag else None
             
-            # Detect category
             category = detect_category(title, content[:500])
             
-            # Cache the article
             cursor.execute(
                 "INSERT INTO article_cache (url, title, content, image_url, category) VALUES (%s, %s, %s, %s, %s)",
                 (url, title, content, image_url, category)
@@ -401,12 +529,11 @@ def read_article():
     cursor.close()
     conn.close()
     
-    # Track reading
     save_reading_history(session['user_id'], article['title'], url)
     
     return render_template('article_reader.html', article=article, username=session.get('username'))
 
-# ---------- SUBMIT FAKE URL (WITH DEEP SCRAPING) ----------
+# ---------- SUBMIT FAKE URL ----------
 @app.route("/submit_fake_url", methods=["POST"])
 def submit_fake_url():
     if 'user_id' not in session:
@@ -418,33 +545,25 @@ def submit_fake_url():
         return jsonify({"status": "error", "message": "URL is required"}), 400
     
     try:
-        # 1. Fetch the URL
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # 2. Extract Data
         title = soup.find('title').get_text().strip() if soup.find('title') else "Unknown Title"
         
-        # Get Description
         meta_desc = soup.find('meta', attrs={'name': 'description'}) or \
                     soup.find('meta', attrs={'property': 'og:description'})
         description = meta_desc['content'].strip() if meta_desc else ""
         
-        # Scrape the actual paragraphs (Article Body)
         paragraphs = soup.find_all('p')
-        # Get first 15 paragraphs to be safe
         article_body = " ".join([p.get_text().strip() for p in paragraphs[:15]])
         
-        # 3. Combine text for Analysis
         full_text_to_analyze = f"{title}. {description}. {article_body}"
         
-        # 4. Run AI Analysis
         label, confidence, ai_score, reasons = detect_fake_news_advanced(full_text_to_analyze, url)
         
-        # Save report
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
@@ -456,7 +575,6 @@ def submit_fake_url():
         )
         conn.commit()
         
-        # Update source tracking
         try:
             domain = urlparse(url).netloc
         except:
@@ -503,13 +621,12 @@ def submit_fake_url():
         print(f"Error: {e}") 
         return jsonify({"status": "error", "message": "Could not analyze URL. The site might be blocking our scanner."}), 500
 
-# ---------- CHATBOT PAGE ----------
+# ---------- CHATBOT ----------
 @app.route("/chatbot")
 def chatbot_page():
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
-    # Get recent conversations
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     cursor.execute(
@@ -522,48 +639,35 @@ def chatbot_page():
     
     return render_template('chatbot.html', conversations=list(reversed(conversations)), username=session.get('username'))
 
-# ---------- CHATBOT API ----------
 @app.route("/chat", methods=["POST"])
 def chat():
     if 'user_id' not in session:
         return jsonify({"status": "error"}), 401
     
     message = request.json.get('message', '').lower()
-    
-    # Simple pattern matching responses
     response = ""
     
     if any(word in message for word in ['hello', 'hi', 'hey', 'kumusta']):
         response = "Hello! I'm True Bayan AI Assistant. I can help you with news, fake news detection, and navigating the app. What would you like to know?"
-    
     elif 'fake news' in message or 'check' in message or 'verify' in message:
         response = "To check if news is fake, you can:\n\n1️⃣ Use the 'Report' button on any article\n2️⃣ Submit a URL in the Fake News Tracker\n3️⃣ Check the confidence score and AI rating shown on articles\n\nOur system analyzes suspicious keywords, source credibility, and writing patterns!"
-    
     elif 'save' in message or 'bookmark' in message:
         response = "You can save articles by clicking the 'Save' button on any news card. The button will turn green when saved. Click it again to unsave. View all your saved articles in the 'Saved' section! 📚"
-    
     elif 'category' in message or 'categories' in message or 'preferences' in message:
         response = "You can customize your news feed in the Preferences page! We have 12 categories:\n\n📰 Politics • 💼 Business • 💻 Technology • ⚽ Sports\n🎬 Entertainment • ❤️ Health • 🎓 Education • 🌿 Environment\n⚖️ Crime • ⛅ Weather • 🎨 Lifestyle • 🍔 Food\n\nSelect your interests and your feed will be personalized!"
-    
     elif 'read' in message or 'article' in message:
         response = "Click the 'Read' button on any article to read it within True Bayan! No ads, no distractions - just clean, easy reading. You can also print or share articles from the reader! 📖"
-    
     elif 'admin' in message:
         response = "The admin dashboard lets admins manage users, review fake news reports, and blacklist suspicious sources. Ask your administrator for access if you need it! 🔐"
-    
     elif 'help' in message:
         response = "Here's what I can help with:\n\n✅ Finding Philippine news\n✅ Detecting fake news\n✅ Saving & organizing articles\n✅ Setting preferences\n✅ Reading articles in-app\n✅ Understanding credibility scores\n\nWhat would you like to know more about?"
-    
     elif any(word in message for word in ['thank', 'thanks', 'salamat']):
         response = "You're very welcome! Glad I could help. Feel free to ask if you need anything else! 😊"
-    
     elif 'latest' in message or 'news' in message:
         response = "Check out the Dashboard for the latest Philippine news! We have:\n\n🔥 Top Headlines\n⭐ Personalized for You\n🕐 Latest News\n\nAll filtered to show only Philippine-related stories!"
-    
     else:
         response = "I can help you with:\n\n• News browsing\n• Fake news detection\n• Saving articles\n• App navigation\n• Setting preferences\n\nCould you please ask about a specific topic?"
     
-    # Save conversation
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
@@ -592,7 +696,6 @@ def get_personalized_news(user_id):
     if not prefs:
         return get_recommended_news()
     
-    # Build query based on preferences - ALL WITH PHILIPPINE CONTEXT
     interests = []
     if prefs.get('category_politics'): interests.append('(politics OR government OR election OR senate OR congress) AND Philippines')
     if prefs.get('category_business'): interests.append('(business OR economy OR trade OR investment OR company) AND Philippines')
@@ -608,10 +711,8 @@ def get_personalized_news(user_id):
     if prefs.get('category_food'): interests.append('(food OR restaurant OR cuisine OR Filipino food) AND Philippines')
     
     if not interests:
-        # Default to general Philippine news if no preferences set
         query = 'Philippines OR Manila OR "Philippine news"'
     else:
-        # Combine all interests with OR
         query = ' OR '.join([f'({interest})' for interest in interests])
     
     try:
@@ -619,10 +720,9 @@ def get_personalized_news(user_id):
             q=query,
             language="en",
             sort_by="publishedAt",
-            page_size=18  # Get more to filter
+            page_size=18
         )["articles"]
         
-        # Filter to ensure only Philippine news
         recommended = filter_philippine_news(recommended)[:9]
 
         for article in recommended:
@@ -631,11 +731,13 @@ def get_personalized_news(user_id):
             article["label"] = detect_fake_news(desc)
             article["category"] = detect_category(article.get("title", ""), desc)
 
+        # ATTACH SOCIAL DATA
+        recommended = attach_social_data(recommended, user_id)
+
         return recommended
     except:
         return get_recommended_news()
 
-# ---------- READING HISTORY ----------
 def save_reading_history(user_id, article_title, article_url):
     conn = get_db()
     cursor = conn.cursor()
@@ -647,43 +749,43 @@ def save_reading_history(user_id, article_title, article_url):
     cursor.close()
     conn.close()
 
-# ---------- LOCAL LATEST NEWS ----------
-def get_latest_news():
-    # Get Philippine-specific news only
+def get_latest_news(user_id=None):
     latest = newsapi.get_everything(
         q='Philippines OR Manila OR Cebu OR Davao OR Duterte OR Marcos OR Philippine',
         language="en",
         sort_by="publishedAt",
-        page_size=12  # Get more to filter
+        page_size=12
     )["articles"]
     
-    # Filter to ensure only Philippine news
     latest = filter_philippine_news(latest)[:6]
 
     for article in latest:
         desc = article.get("description") or ""
         article["summary"] = summarize(desc)
 
+    # ATTACH SOCIAL DATA
+    latest = attach_social_data(latest, user_id)
+
     return latest
 
-# ---------- LOCAL RECOMMENDED ----------
-def get_recommended_news():
-    # Philippine-focused topics only
+def get_recommended_news(user_id=None):
     topics = '(Philippines OR Manila OR Cebu OR Davao OR Mindanao OR Luzon OR Visayas OR "Philippine government" OR "Filipino" OR Quezon OR Makati OR Pasig)'
 
     recommended = newsapi.get_everything(
         q=topics,
         language="en",
         sort_by="publishedAt",
-        page_size=12  # Get more to filter
+        page_size=12
     )["articles"]
     
-    # Filter to ensure only Philippine news
     recommended = filter_philippine_news(recommended)[:6]
 
     for article in recommended:
         desc = article.get("description") or ""
         article["summary"] = summarize(desc)
+    
+    # ATTACH SOCIAL DATA
+    recommended = attach_social_data(recommended, user_id)
 
     return recommended
 
@@ -701,7 +803,6 @@ def register():
         conn = get_db()
         cursor = conn.cursor()
         
-        # Check if user exists
         cursor.execute("SELECT * FROM users WHERE email = %s OR username = %s", (email, username))
         if cursor.fetchone():
             flash("User already exists!", "danger")
@@ -716,10 +817,8 @@ def register():
         )
         conn.commit()
         
-        # Get the new user ID
         user_id = cursor.lastrowid
         
-        # Create default preferences
         cursor.execute(
             "INSERT INTO user_preferences (user_id) VALUES (%s)",
             (user_id,)
@@ -769,70 +868,65 @@ def logout():
 # ---------- LANDING PAGE ----------
 @app.route("/")
 def landing():
-    # Show preview for non-logged-in users
     if 'user_id' not in session:
         latest_news = get_latest_news()
         
-        # Get Philippine top headlines
         headlines = newsapi.get_everything(
             q='Philippines OR Manila OR "Philippine news" OR Duterte OR Marcos',
             language="en",
             sort_by="publishedAt",
-            page_size=12  # Get more to filter
+            page_size=12
         )["articles"]
         
-        # Filter to ensure only Philippine news
         headlines = filter_philippine_news(headlines)[:6]
         
         for h in headlines:
             desc = h.get("description") or ""
             h["label"] = detect_fake_news(desc)
         
+        # ATTACH SOCIAL DATA (No user ID, so just global counts)
+        headlines = attach_social_data(headlines)
+
         return render_template(
             "landing.html",
             all_headlines=headlines,
             latest_news=latest_news
         )
     
-    # If logged in, redirect to dashboard
     return redirect(url_for('dashboard'))
 
-# ---------- DASHBOARD (UPDATED FOR PAGINATION) ----------
+# ---------- DASHBOARD (PAGINATION) ----------
 @app.route("/dashboard", methods=["GET", "POST"])
 def dashboard():
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
-    # Get personalized recommendations (usually 6-9 items, displayed in a block)
-    recommended = get_personalized_news(session['user_id'])
+    user_id = session['user_id']
+    recommended = get_personalized_news(user_id)
+    prefs = get_user_preferences(user_id) # Added to fix undefined prefs error
 
-    # PAGINATION SETUP
     page = request.args.get('page', 1, type=int)
-    per_page = 9  # Items per page
+    category = request.args.get('category')  # Handle category filter
+    per_page = 9
     
-    # Initialize variables
-    all_articles = [] # Search results
-    latest_news = []  # Default news feed
+    all_articles = []
+    latest_news = []
     total_pages = 0
 
     if request.method == "POST":
-        # SEARCH MODE
         keyword = request.form.get("keyword")
 
-        # Ensure search is Philippine-focused and fetch enough for pagination (e.g., 50)
         search_query = f'({keyword}) AND (Philippines OR Manila OR Filipino OR "Philippine news")'
 
         raw_news = newsapi.get_everything(
             q=search_query,
             language="en",
             sort_by="relevancy",
-            page_size=50  # Fetch more to allow pagination
+            page_size=50
         )["articles"]
         
-        # Filter
         all_articles = filter_philippine_news(raw_news)
         
-        # Process articles (AI detection, summaries)
         for article in all_articles:
             desc = article.get("description") or ""
             article["label"] = detect_fake_news(desc)
@@ -840,7 +934,9 @@ def dashboard():
             article["filipino"] = translate_filipino(desc)
             article["category"] = detect_category(article.get("title", ""), desc)
 
-        # PAGINATE SEARCH RESULTS
+        # ATTACH SOCIAL DATA
+        all_articles = attach_social_data(all_articles, user_id)
+
         total_items = len(all_articles)
         total_pages = (total_items + per_page - 1) // per_page
         
@@ -850,37 +946,67 @@ def dashboard():
 
         return render_template(
             "home.html",
-            all_articles=paginated_articles, # Send PAGINATED list
+            all_articles=paginated_articles,
             keyword=keyword,
-            latest_news=[], # Hide latest news during search
+            latest_news=[],
             recommended_news=recommended,
             username=session.get('username'),
             page=page,
-            total_pages=total_pages
+            total_pages=total_pages,
+            prefs=prefs  # Pass prefs to template
         )
 
-    # GET MODE (DEFAULT DASHBOARD)
-    
-    # 1. Fetch Headlines (Top Block - no pagination needed usually)
-    headlines = newsapi.get_everything(
-        q='Philippines OR Manila OR "Philippine news" OR "Metro Manila" OR Cebu OR Davao',
-        language="en",
-        sort_by="publishedAt",
-        page_size=18 
-    )["articles"]
+    # GET MODE
+    if category:
+        # Define keywords for each category
+        category_keywords = {
+            'Politics': 'politics OR government OR election OR senate OR congress',
+            'Business': 'business OR economy OR market OR trade',
+            'Technology': 'technology OR tech OR digital OR cyber',
+            'Sports': 'sports OR basketball OR PBA OR boxing',
+            'Entertainment': 'entertainment OR showbiz OR celebrity',
+            'Health': 'health OR covid OR medical OR virus',
+            'World': 'world news',
+        }
+        
+        # Get keywords for selected category, default to general if not found
+        keywords = category_keywords.get(category, category)
+        
+        # Construct query combining category keywords with Philippines context
+        if category == 'World':
+             query = f'({keywords})' # World news might not always have "Philippines" in text
+        else:
+             query = f'({keywords}) AND (Philippines OR Manila)'
+
+        headlines = newsapi.get_everything(
+            q=query,
+            language="en",
+            sort_by="publishedAt",
+            page_size=18
+        )["articles"]
+    else:
+        # Default Headlines if no category selected
+        headlines = newsapi.get_everything(
+            q='Philippines OR Manila OR "Philippine news" OR "Metro Manila" OR Cebu OR Davao',
+            language="en",
+            sort_by="publishedAt",
+            page_size=18 
+        )["articles"]
+
     headlines = filter_philippine_news(headlines)[:9]
     for h in headlines:
         desc = h.get("description") or ""
         h["label"] = detect_fake_news(desc)
         h["category"] = detect_category(h.get("title", ""), desc)
+    
+    # ATTACH SOCIAL DATA
+    headlines = attach_social_data(headlines, user_id)
 
-    # 2. Fetch Latest News (Bottom Block - NEEDS PAGINATION)
-    # We fetch a larger batch here manually to allow scrolling pages
     raw_latest = newsapi.get_everything(
         q='Philippines OR Manila OR Cebu OR Davao OR Duterte OR Marcos OR Philippine',
         language="en",
         sort_by="publishedAt",
-        page_size=50 # Fetch 50 items to spread across pages
+        page_size=50
     )["articles"]
     
     latest_news = filter_philippine_news(raw_latest)
@@ -891,7 +1017,9 @@ def dashboard():
         article["label"] = detect_fake_news(desc)
         article["category"] = detect_category(article.get("title", ""), desc)
 
-    # PAGINATE LATEST NEWS
+    # ATTACH SOCIAL DATA
+    latest_news = attach_social_data(latest_news, user_id)
+
     total_items = len(latest_news)
     total_pages = (total_items + per_page - 1) // per_page
     
@@ -902,14 +1030,14 @@ def dashboard():
     return render_template(
         "home.html",
         all_headlines=headlines,
-        latest_news=paginated_latest, # Send PAGINATED list
+        latest_news=paginated_latest,
         recommended_news=recommended,
         username=session.get('username'),
         page=page,
-        total_pages=total_pages
+        total_pages=total_pages,
+        prefs=prefs  # Pass prefs to template
     )
 
-# ---------- PREFERENCES ----------
 @app.route("/preferences", methods=["GET", "POST"])
 def preferences():
     if 'user_id' not in session:
@@ -960,7 +1088,6 @@ def preferences():
     prefs = get_user_preferences(session['user_id'])
     return render_template("preferences.html", prefs=prefs, username=session.get('username'))
 
-# ---------- SAVE ARTICLE ----------
 @app.route("/save", methods=["POST"])
 def save_article():
     if 'user_id' not in session:
@@ -972,7 +1099,6 @@ def save_article():
     conn = get_db()
     cursor = conn.cursor()
 
-    # Check if already saved
     cursor.execute(
         "SELECT * FROM saved_articles WHERE user_id = %s AND url = %s",
         (session['user_id'], url)
@@ -994,7 +1120,6 @@ def save_article():
 
     return jsonify({"status": "success", "message": "Saved!"})
 
-# ---------- MY SAVED ----------
 @app.route("/saved")
 def saved():
     if 'user_id' not in session:
@@ -1004,21 +1129,18 @@ def saved():
     cursor = conn.cursor(dictionary=True)
     
     try:
-        # Try to get articles with saved_at column
         cursor.execute(
             "SELECT * FROM saved_articles WHERE user_id = %s ORDER BY saved_at DESC",
             (session['user_id'],)
         )
         articles = cursor.fetchall()
     except mysql.connector.Error as err:
-        # Fallback if saved_at column doesn't exist
-        if err.errno == 1054:  # Unknown column error
+        if err.errno == 1054:
             cursor.execute(
                 "SELECT * FROM saved_articles WHERE user_id = %s ORDER BY id DESC",
                 (session['user_id'],)
             )
             articles = cursor.fetchall()
-            # Add a default saved_at for display
             from datetime import datetime
             for article in articles:
                 article['saved_at'] = datetime.now()
@@ -1030,7 +1152,6 @@ def saved():
     
     return render_template("saved.html", articles=articles, username=session.get('username'))
 
-# ---------- DELETE SAVED ARTICLE ----------
 @app.route("/delete_saved", methods=["POST"])
 def delete_saved():
     if 'user_id' not in session:
@@ -1041,7 +1162,6 @@ def delete_saved():
     conn = get_db()
     cursor = conn.cursor()
     
-    # Delete only if it belongs to the current user
     cursor.execute(
         "DELETE FROM saved_articles WHERE id = %s AND user_id = %s",
         (article_id, session['user_id'])
@@ -1057,7 +1177,6 @@ def delete_saved():
     else:
         return jsonify({"status": "error", "message": "Article not found"}), 404
 
-# ---------- READING HISTORY ----------
 @app.route("/history")
 def history():
     if 'user_id' not in session:
@@ -1075,7 +1194,6 @@ def history():
     
     return render_template("history.html", history=history, username=session.get('username'))
 
-# ---------- TRACK READ ----------
 @app.route("/track_read", methods=["POST"])
 def track_read():
     if 'user_id' not in session:
@@ -1087,7 +1205,6 @@ def track_read():
     save_reading_history(session['user_id'], title, url)
     return jsonify({"status": "success"})
 
-# ---------- FAKE NEWS TRACKING ----------
 @app.route("/report_fake", methods=["POST"])
 def report_fake():
     if 'user_id' not in session:
@@ -1098,13 +1215,11 @@ def report_fake():
     article_title = data.get('title')
     description = data.get('description', '')
     
-    # Analyze the article
     label, confidence, ai_score, reasons = detect_fake_news_advanced(description, article_url)
     
     conn = get_db()
     cursor = conn.cursor()
     
-    # Save report
     cursor.execute(
         """INSERT INTO fake_news_reports 
         (user_id, article_url, article_title, source_url, detection_label, 
@@ -1114,14 +1229,12 @@ def report_fake():
          label, confidence, ai_score, '; '.join(reasons))
     )
     
-    # Extract domain from URL
     from urllib.parse import urlparse
     try:
         domain = urlparse(article_url).netloc
     except:
         domain = article_url
     
-    # Update or create source tracking
     cursor.execute(
         "SELECT * FROM fake_news_sources WHERE source_url = %s OR domain = %s",
         (article_url, domain)
@@ -1129,7 +1242,6 @@ def report_fake():
     source = cursor.fetchone()
     
     if source:
-        # Update existing source
         cursor.execute(
             """UPDATE fake_news_sources 
             SET report_count = report_count + 1,
@@ -1140,7 +1252,6 @@ def report_fake():
             (confidence, confidence, domain)
         )
     else:
-        # Create new source
         cursor.execute(
             """INSERT INTO fake_news_sources 
             (source_url, domain, report_count, total_confidence, avg_confidence) 
@@ -1160,7 +1271,6 @@ def report_fake():
         "reasons": reasons
     })
 
-# ---------- FAKE NEWS TRACKER PAGE ----------
 @app.route("/fake_news_tracker")
 def fake_news_tracker():
     if 'user_id' not in session:
@@ -1169,14 +1279,12 @@ def fake_news_tracker():
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     
-    # Get recent reports
     cursor.execute(
         """SELECT * FROM fake_news_reports 
         ORDER BY reported_at DESC LIMIT 50"""
     )
     recent_reports = cursor.fetchall()
     
-    # Get trending fake sources
     cursor.execute(
         """SELECT * FROM fake_news_sources 
         ORDER BY report_count DESC, avg_confidence DESC 
@@ -1184,7 +1292,6 @@ def fake_news_tracker():
     )
     trending_sources = cursor.fetchall()
     
-    # Get statistics
     cursor.execute("SELECT COUNT(*) as total FROM fake_news_reports")
     total_reports = cursor.fetchone()['total']
     
@@ -1210,13 +1317,11 @@ def fake_news_tracker():
         username=session.get('username')
     )
 
-# ---------- ADMIN DASHBOARD ----------
 @app.route("/admin/dashboard")
 def admin_dashboard():
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
-    # Check if user is admin
     conn = get_db()
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT is_admin FROM users WHERE id = %s", (session['user_id'],))
@@ -1228,11 +1333,9 @@ def admin_dashboard():
         conn.close()
         return redirect(url_for('dashboard'))
     
-    # Get all users
     cursor.execute("SELECT id, username, email, created_at FROM users ORDER BY created_at DESC")
     users = cursor.fetchall()
     
-    # Get all fake news reports with user info
     cursor.execute(
         """SELECT fnr.*, u.username 
         FROM fake_news_reports fnr 
@@ -1241,14 +1344,12 @@ def admin_dashboard():
     )
     all_reports = cursor.fetchall()
     
-    # Get all fake news sources
     cursor.execute(
         """SELECT * FROM fake_news_sources 
         ORDER BY report_count DESC, avg_confidence DESC"""
     )
     all_sources = cursor.fetchall()
     
-    # Get statistics
     cursor.execute("SELECT COUNT(*) as total FROM users")
     total_users = cursor.fetchone()['total']
     
@@ -1276,14 +1377,13 @@ def admin_dashboard():
         username=session.get('username')
     )
 
-# ---------- BLACKLIST SOURCE ----------
 @app.route("/admin/blacklist_source", methods=["POST"])
 def blacklist_source():
     if 'user_id' not in session:
         return jsonify({"status": "error"}), 401
     
     source_id = request.json.get('source_id')
-    action = request.json.get('action')  # 'blacklist' or 'whitelist'
+    action = request.json.get('action') 
     
     conn = get_db()
     cursor = conn.cursor()
@@ -1305,21 +1405,21 @@ def blacklist_source():
     
     return jsonify({"status": "success"})
 
-# ---------- MOBILE API ----------
 @app.route("/api/news")
 def api_news():
     news = newsapi.get_everything(
         q='Philippines OR Manila OR "Philippine news"',
         language="en",
         sort_by="publishedAt",
-        page_size=15  # Get more to filter
+        page_size=15
     )["articles"]
     
-    # Filter to ensure only Philippine news
     news = filter_philippine_news(news)[:10]
+
+    # ATTACH SOCIAL DATA (Global only)
+    news = attach_social_data(news)
 
     return jsonify(news)
 
-# ---------- RUN ----------
 if __name__ == "__main__":
-    app.run(debug=True, port=5002)
+    app.run(debug=True, port=5001)

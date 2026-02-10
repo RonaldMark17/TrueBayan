@@ -313,13 +313,25 @@
                     <ul class="navbar-nav ms-auto align-items-center">
                         <li class="nav-item"><a class="nav-link"
                                 href="{{ url_for('dashboard') }}">Home</a></li>
-                        <li class="nav-item"><a class="nav-link"
-                                href="{{ url_for('saved') }}">Saved</a></li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('saved') }}">
+                                Saved
+                                <span class="badge bg-danger rounded-pill ms-1"
+                                    id="user-saved-count"
+                                    style="display: none; font-size: 0.7em;">0</span>
+                            </a>
+                        </li>
                         <li class="nav-item"><a class="nav-link"
                                 href="{{ url_for('fake_news_tracker') }}">Fake
                                 News Tracker</a></li>
-                        <li class="nav-item"><a class="nav-link active"
-                                href="{{ url_for('history') }}">History</a></li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="{{ url_for('history') }}">
+                                History
+                                <span class="badge bg-primary rounded-pill ms-1"
+                                    id="user-liked-count"
+                                    style="display: none; font-size: 0.7em;">0</span>
+                            </a>
+                        </li>
                         <li class="nav-item"><a class="nav-link"
                                 href="{{ url_for('preferences') }}">Preferences</a></li>
                         <li class="nav-item ms-lg-3">

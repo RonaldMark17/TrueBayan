@@ -61,17 +61,17 @@
         .article-content { font-family: 'Merriweather', serif; font-size: 1.125rem; line-height: 1.8; color: var(--text-body); }
         .article-content p { margin-bottom: 2rem; display: block; }
         
-        /* Drop Cap (Disabled when highlighting to prevent layout shifts) */
+        /* Drop Cap */
         .article-content:not(.reading-mode) > p:first-of-type::first-letter {
             font-size: 3.5em; font-weight: 700; float: left; line-height: 0.8; margin-right: 0.1em; color: var(--dark);
         }
 
-        /* THE HIGHLIGHT STYLE */
+        /* HIGHLIGHT STYLE */
         .word-highlight {
             background-color: #fde047; /* Yellow */
             color: black;
             border-radius: 3px;
-            box-shadow: 0 0 0 2px #fde047; /* Expands highlight slightly */
+            box-shadow: 0 0 0 2px #fde047; 
             transition: background-color 0.1s;
         }
 
@@ -90,6 +90,12 @@
         @keyframes sound { 0% { height: 3px; opacity: .35; } 100% { height: 100%; opacity: 1; } }
         .btn-tool.active .playing-indicator { display: flex; }
         .btn-tool.active .bar { animation-duration: 0.4s; }
+
+        /* Summary Modal */
+        .modal-content { border-radius: 20px; border: none; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); }
+        .modal-header { border-bottom: 1px solid #f3f4f6; padding: 20px 30px; }
+        .modal-body { padding: 30px; font-family: 'Merriweather', serif; font-size: 1.05rem; line-height: 1.7; color: #374151; }
+        .summary-loader { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; color: #6b7280; }
 
         /* Chatbot CSS */
         .chat-toggle-btn { position: fixed; bottom: 30px; right: 30px; width: 65px; height: 65px; background: linear-gradient(135deg, #4F46E5, #ec4899); border-radius: 50%; box-shadow: 0 10px 25px rgba(79, 70, 229, 0.4); display: flex; align-items: center; justify-content: center; color: white; font-size: 1.8rem; cursor: pointer; z-index: 9999; transition: all 0.3s; border: none; }
@@ -167,11 +173,19 @@
 
         <input type="hidden" id="originalTitle" value="{{ article.title }}">
         <input type="hidden" id="originalContent" value="{{ article.content|striptags|replace('\n', ' ')|safe }}">
-        <input type="hidden" id="translatedTitle" value="">
-        <input type="hidden" id="translatedContent" value="">
+        
+        <input type="hidden" id="englishTitle" value="">
+        <input type="hidden" id="englishContent" value="">
+        
+        <input type="hidden" id="tagalogTitle" value="">
+        <input type="hidden" id="tagalogContent" value="">
 
         <div class="action-bar">
             <div class="d-flex gap-2 flex-wrap justify-content-center">
+                <button class="btn-action btn-tool" id="btnSummarize" onclick="openSummarizer()">
+                    <i class="fas fa-magic"></i> Summarize
+                </button>
+
                 <button class="btn-action btn-tool" id="btnTranslate" onclick="toggleTranslation()">
                     <i class="fas fa-language"></i> 
                     <span id="txtTranslate">Translate to Tagalog</span>
@@ -195,6 +209,28 @@
             </button>
         </div>
     </div>
+
+    <div class="modal fade" id="summaryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="fas fa-magic text-primary me-2"></i>AI Summary</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="summaryBody">
+                </div>
+            <div class="modal-footer justify-content-center border-top-0">
+                <button class="btn btn-outline-primary btn-sm rounded-pill px-3" id="btnListenSummary" onclick="listenToSummary()">
+                    <i class="fas fa-volume-up me-1"></i> Listen
+                </button>
+                <button class="btn btn-outline-secondary btn-sm rounded-pill px-3" id="btnTranslateSummary" onclick="translateSummary()">
+                    <i class="fas fa-language me-1"></i> Translate to Tagalog
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 
     <button class="chat-toggle-btn" id="chatToggle" onclick="toggleChat()">
         <i class="fas fa-comment-dots" id="toggleIcon"></i>
@@ -221,12 +257,13 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // --- 1. GLOBAL VARIABLES ---
-        let currentLang = 'en';
+        let currentLang = 'original'; // 'original', 'en' (auto), or 'tl'
         let originalHtml = ""; 
         let wordSpans = []; 
         let tagalogInterval = null; 
         let synth = window.speechSynthesis;
         let apiAudio = null;
+        let summaryCache = "";
 
         const titleEl = document.getElementById('articleTitle');
         const contentEl = document.getElementById('articleContent');
@@ -236,14 +273,102 @@
         const iconListen = document.getElementById('iconListen');
         const txtListen = document.getElementById('txtListen');
 
-        // Store original structure on load
-        window.addEventListener('DOMContentLoaded', () => {
+        // Store original structure on load & Check for Chinese
+        window.addEventListener('DOMContentLoaded', async () => {
             originalHtml = contentEl.innerHTML;
+            await checkAndTranslateChinese();
         });
 
-        // --- 2. HIGHLIGHTING UTILITIES ---
+        // --- 2. AUTO-DETECT CHINESE ---
+        async function checkAndTranslateChinese() {
+            const rawText = document.getElementById('originalContent').value;
+            // Regex to detect Chinese characters
+            const chineseRegex = /[\u4e00-\u9fa5]/;
+            
+            if (chineseRegex.test(rawText)) {
+                console.log("Chinese detected. Auto-translating to English...");
+                
+                // Show a loading indicator in the content area temporarily
+                contentEl.innerHTML = '<div class="text-center py-5"><div class="spinner-border text-primary" role="status"></div><p class="mt-2 text-muted">Translating...</p></div>';
+                
+                try {
+                    const response = await fetch('/translate_article', { 
+                       method: 'POST', headers: { 'Content-Type': 'application/json' },
+                       body: JSON.stringify({ text: rawText, target_lang: 'en' }) // Assuming backend accepts target_lang
+                    });
+                    const data = await response.json();
+                    
+                    if (data.translated_text) {
+                        // Store the English Translation
+                        document.getElementById('englishTitle').value = document.getElementById('originalTitle').value; // Keep title or translate it too if API supports
+                        document.getElementById('englishContent').value = data.translated_text;
+                        
+                        // Update View to English
+                        contentEl.innerHTML = `<p>${data.translated_text}</p>`;
+                        currentLang = 'en'; // Mark current state as English
+                        
+                        // Update original HTML storage to be the English version so resetting returns to English
+                        originalHtml = `<p>${data.translated_text}</p>`; 
+                        
+                        console.log("Auto-translation complete.");
+                    } else {
+                        // Fallback if API fails
+                        contentEl.innerHTML = document.getElementById('originalContent').value; 
+                    }
+                } catch (e) {
+                    console.error("Auto-translate failed", e);
+                    contentEl.innerHTML = document.getElementById('originalContent').value; // Revert
+                }
+            }
+        }
+
+        // --- 3. SUMMARIZER LOGIC ---
+        async function openSummarizer() {
+            const modal = new bootstrap.Modal(document.getElementById('summaryModal'));
+            const body = document.getElementById('summaryBody');
+            
+            modal.show();
+
+            if (summaryCache) {
+                body.innerHTML = summaryCache;
+                return;
+            }
+
+            // Loading State
+            body.innerHTML = `
+                <div class="summary-loader">
+                    <div class="spinner-border text-primary mb-3" role="status"></div>
+                    <p>Generating summary...</p>
+                </div>
+            `;
+
+            try {
+                // Determine which text to summarize (English preference)
+                let textToSummarize = document.getElementById('englishContent').value || document.getElementById('originalContent').value;
+                
+                const response = await fetch('/api/summarize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: textToSummarize })
+                });
+
+                const data = await response.json();
+                
+                if(data.summary) {
+                    summaryCache = `<p>${data.summary}</p>`;
+                    body.innerHTML = summaryCache;
+                } else {
+                    body.innerHTML = `<p class="text-danger">Could not generate summary.</p>`;
+                }
+            } catch (error) {
+                console.error(error);
+                body.innerHTML = `<p class="text-danger">Error connecting to AI service.</p>`;
+            }
+        }
+
+        // --- 4. HIGHLIGHTING UTILITIES ---
         function setupWordSpans(text) {
-            contentEl.classList.add('reading-mode'); // Disable Dropcap
+            contentEl.classList.add('reading-mode'); 
             const paragraphs = text.split('\n').filter(p => p.trim() !== '');
             contentEl.innerHTML = ''; 
             wordSpans = []; 
@@ -266,17 +391,17 @@
         }
 
         function resetContent() {
-            if(currentLang === 'en') {
-                contentEl.innerHTML = originalHtml;
+            // If we are in Tagalog, stay there. If we were in Auto-English, go back to English.
+            if(currentLang === 'tl') {
+                contentEl.innerHTML = `<p>${document.getElementById('tagalogContent').value}</p>`;
             } else {
-                const transContent = document.getElementById('translatedContent').value;
-                contentEl.innerHTML = `<p>${transContent}</p>`;
+                contentEl.innerHTML = originalHtml; // This is now English if it was auto-translated
             }
             contentEl.classList.remove('reading-mode'); 
             wordSpans = [];
         }
 
-        // --- 3. SPEECH LOGIC ---
+        // --- 5. SPEECH LOGIC ---
         function stopAudio() {
             if (synth.speaking) synth.cancel();
             if (apiAudio) {
@@ -290,10 +415,7 @@
             resetContent(); 
         }
 
-        // FIX: Ensure stopping on page unload/navigate
-        window.onbeforeunload = function() {
-            stopAudio();
-        };
+        window.onbeforeunload = function() { stopAudio(); };
 
         async function toggleSpeech() {
             if (synth.speaking || (apiAudio && !apiAudio.paused) || btnListen.classList.contains('active')) {
@@ -306,14 +428,18 @@
             txtListen.textContent = "Loading...";
 
             let textToRead = "";
-            if(currentLang === 'en') {
-                textToRead = document.getElementById('originalContent').value;
+            // Logic: Read whatever is currently on screen
+            if(currentLang === 'tl') {
+                textToRead = document.getElementById('tagalogContent').value;
+            } else if (currentLang === 'en') {
+                textToRead = document.getElementById('englishContent').value;
             } else {
-                textToRead = document.getElementById('translatedContent').value;
+                textToRead = document.getElementById('originalContent').value;
             }
             
             setupWordSpans(textToRead);
 
+            // If Tagalog, use API; otherwise use Browser TTS (works for English)
             if (currentLang === 'tl') {
                 try {
                     const response = await fetch('/api/speak', {
@@ -332,14 +458,13 @@
                     apiAudio.onloadedmetadata = function() {
                         const duration = apiAudio.duration;
                         const totalWords = wordSpans.length;
-                        const intervalTime = (duration / totalWords) * 1000; // ms
+                        const intervalTime = (duration / totalWords) * 1000; 
                         let currentWordIndex = 0;
                         apiAudio.play();
                         tagalogInterval = setInterval(() => {
                             clearHighlights();
                             if(currentWordIndex < totalWords) {
                                 wordSpans[currentWordIndex].classList.add('word-highlight');
-                                // wordSpans[currentWordIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
                                 currentWordIndex++;
                             } else {
                                 clearInterval(tagalogInterval);
@@ -358,6 +483,7 @@
                 }
 
             } else {
+                // Browser TTS for English (or original language)
                 const utterance = new SpeechSynthesisUtterance(textToRead);
                 utterance.lang = 'en-US';
                 
@@ -385,41 +511,42 @@
             txtListen.textContent = "Listen";
         }
 
-        // --- 4. TRANSLATION LOGIC ---
+        // --- 6. TRANSLATION LOGIC (UPDATED) ---
         async function toggleTranslation() {
             stopAudio(); 
 
-            if (currentLang === 'en') {
+            if (currentLang !== 'tl') {
+                // Switch TO Tagalog
                 btnTranslate.disabled = true;
                 txtTranslate.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Translating...';
                 
                 try {
-                    let transTitle = document.getElementById('translatedTitle').value;
-                    let transContent = document.getElementById('translatedContent').value;
+                    let transTitle = document.getElementById('tagalogTitle').value;
+                    let transContent = document.getElementById('tagalogContent').value;
 
-                    if (!transTitle) {
-                        const bodyText = document.getElementById('originalContent').value;
-                        const titleText = document.getElementById('originalTitle').value;
+                    if (!transContent) {
+                        // Source text: Prefer English (if auto-translated) over Original
+                        const sourceText = document.getElementById('englishContent').value || document.getElementById('originalContent').value;
                         
                         const response = await fetch('/translate_article', { 
                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                           body: JSON.stringify({ text: bodyText }) 
+                           body: JSON.stringify({ text: sourceText, target_lang: 'tl' }) 
                         });
                         const data = await response.json();
                         if (data.error) throw new Error(data.error);
 
                         transContent = data.translated_text;
-                        transTitle = titleText; 
+                        transTitle = document.getElementById('originalTitle').value; 
                         
-                        document.getElementById('translatedTitle').value = transTitle;
-                        document.getElementById('translatedContent').value = transContent;
+                        document.getElementById('tagalogTitle').value = transTitle;
+                        document.getElementById('tagalogContent').value = transContent;
                     }
 
                     titleEl.textContent = transTitle;
                     contentEl.innerHTML = `<p>${transContent}</p>`;
                     
                     currentLang = 'tl';
-                    txtTranslate.textContent = "Show Original";
+                    txtTranslate.textContent = "Show English"; // Or "Show Original"
                     btnTranslate.classList.add('active');
 
                 } catch (error) {
@@ -431,9 +558,13 @@
                 }
 
             } else {
+                // Switch BACK (To English or Original)
                 titleEl.textContent = document.getElementById('originalTitle').value;
-                contentEl.innerHTML = originalHtml;
-                currentLang = 'en';
+                contentEl.innerHTML = originalHtml; // originalHtml is updated by the Auto-Translate logic to be English
+                
+                // Determine if we are reverting to English or Original for state tracking
+                currentLang = document.getElementById('englishContent').value ? 'en' : 'original';
+                
                 txtTranslate.textContent = "Translate to Tagalog";
                 btnTranslate.classList.remove('active');
             }
@@ -447,7 +578,7 @@
             document.getElementById("myBar").style.width = scrolled + "%";
         };
 
-        // --- CHATBOT ---
+        // --- CHATBOT (Unchanged Logic) ---
         const chatPopup = document.getElementById('chatPopup');
         const toggleIcon = document.getElementById('toggleIcon');
         const chatBody = document.getElementById('chatBody');
@@ -507,6 +638,163 @@
             if (navigator.share) { navigator.share({ title: '{{ article.title }}', url: window.location.href }); }
             else { navigator.clipboard.writeText(window.location.href); alert('Link copied!'); }
         }
+
+        // --- IMPROVED MODAL LOGIC ---
+
+async function listenToSummary() {
+    const summaryBody = document.getElementById('summaryBody');
+    const summaryText = summaryBody.innerText;
+    const btn = document.getElementById('btnListenSummary');
+    
+    // Prevent actions if summary is still loading
+    if (!summaryText || summaryText.includes("Generating")) return;
+
+    // Toggle: Stop if already playing
+    if (synth.speaking || apiAudio || btn.classList.contains('active')) {
+        stopSummaryAudio();
+        return;
+    }
+
+    btn.classList.add('active');
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Loading...';
+
+    // 1. Setup word spans for highlighting within the modal body
+    const paragraphs = summaryText.split('\n').filter(p => p.trim() !== '');
+    summaryBody.innerHTML = ''; 
+    let modalWordSpans = []; 
+
+    paragraphs.forEach(paraText => {
+        const p = document.createElement('p');
+        paraText.split(' ').forEach(word => {
+            const span = document.createElement('span');
+            span.textContent = word + ' ';
+            span.className = 'word-span';
+            p.appendChild(span);
+            modalWordSpans.push(span);
+        });
+        summaryBody.appendChild(p);
+    });
+
+    // 2. Decide Voice Engine: Use API for Tagalog (if translated), otherwise Browser TTS
+    const isTagalog = summaryText.toLowerCase().includes("tagalog") || summaryBody.innerHTML.includes("Tagalog:");
+
+    if (isTagalog) {
+        try {
+            const response = await fetch('/api/speak', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: summaryText, lang: 'tl' })
+            });
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            apiAudio = new Audio(url);
+
+            apiAudio.onloadedmetadata = () => {
+                const intervalTime = (apiAudio.duration / modalWordSpans.length) * 1000;
+                let idx = 0;
+                apiAudio.play();
+                btn.innerHTML = '<i class="fas fa-stop me-1"></i> Stop';
+                
+                tagalogInterval = setInterval(() => {
+                    modalWordSpans.forEach(s => s.classList.remove('word-highlight'));
+                    if(idx < modalWordSpans.length) {
+                        modalWordSpans[idx].classList.add('word-highlight');
+                        idx++;
+                    }
+                }, intervalTime);
+            };
+            apiAudio.onended = stopSummaryAudio;
+        } catch (e) { stopSummaryAudio(); }
+    } else {
+        // Browser TTS for English Summary
+        const utterance = new SpeechSynthesisUtterance(summaryText);
+        utterance.onboundary = (event) => {
+            if (event.name === 'word') {
+                const wordIdx = summaryText.substring(0, event.charIndex).split(' ').length - 1;
+                modalWordSpans.forEach(s => s.classList.remove('word-highlight'));
+                if (modalWordSpans[wordIdx]) modalWordSpans[wordIdx].classList.add('word-highlight');
+            }
+        };
+        utterance.onstart = () => btn.innerHTML = '<i class="fas fa-stop me-1"></i> Stop';
+        utterance.onend = stopSummaryAudio;
+        synth.speak(utterance);
+    }
+}
+
+function stopSummaryAudio() {
+    if (synth.speaking) synth.cancel();
+    if (apiAudio) { apiAudio.pause(); apiAudio = null; }
+    if (tagalogInterval) clearInterval(tagalogInterval);
+    
+    const btn = document.getElementById('btnListenSummary');
+    btn.classList.remove('active');
+    btn.innerHTML = '<i class="fas fa-volume-up me-1"></i> Listen';
+    
+    // Re-render the cache to remove spans/highlights
+    document.getElementById('summaryBody').innerHTML = summaryCache;
+}
+// --- IMPROVED SUMMARY TRANSLATION ---
+let isSummaryTranslated = false;
+let originalSummaryCache = ""; // To store the English version specifically
+
+async function translateSummary() {
+    const summaryBody = document.getElementById('summaryBody');
+    const btn = document.getElementById('btnTranslateSummary');
+    
+    // Ensure we have the original English version saved before we translate
+    if (!isSummaryTranslated) {
+        originalSummaryCache = summaryBody.innerHTML;
+    }
+
+    if (isSummaryTranslated) {
+        // Toggle BACK to English
+        summaryBody.innerHTML = originalSummaryCache;
+        btn.innerHTML = '<i class="fas fa-language me-1"></i> Translate to Tagalog';
+        isSummaryTranslated = false;
+        return;
+    }
+
+    // Toggle TO Tagalog
+    const textToTranslate = summaryBody.innerText;
+    if (!textToTranslate || textToTranslate.includes("Generating")) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Translating...';
+
+    try {
+        const response = await fetch('/translate_article', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: textToTranslate })
+        });
+        const data = await response.json();
+
+        if (data.translated_text) {
+            // Update the display
+            summaryBody.innerHTML = `<p class="text-muted small mb-2"><i class="fas fa-info-circle"></i> Tagalog Summary:</p><p>${data.translated_text}</p>`;
+            
+            // Update button state
+            btn.innerHTML = '<i class="fas fa-undo me-1"></i> Show Original';
+            isSummaryTranslated = true;
+        } else {
+            throw new Error("Empty response");
+        }
+    } catch (e) {
+        console.error("Summary translation failed:", e);
+        btn.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i> Error';
+        setTimeout(() => {
+            btn.innerHTML = '<i class="fas fa-language me-1"></i> Translate to Tagalog';
+        }, 2000);
+    } finally {
+        btn.disabled = false;
+    }
+}
+// Add this to your stopSummaryAudio or whenever the modal closes
+function resetModalState() {
+    isSummaryTranslated = false;
+    const btn = document.getElementById('btnTranslateSummary');
+    if (btn) btn.innerHTML = '<i class="fas fa-language me-1"></i> Translate to Tagalog';
+}
     </script>
 </body>
 </html>
