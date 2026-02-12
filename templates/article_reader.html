@@ -116,20 +116,106 @@
         .chat-input { border: none; background: transparent; flex-grow: 1; font-size: 0.95rem; outline: none; color: #111827; }
         .btn-send { width: 35px; height: 35px; border-radius: 50%; background: #4F46E5; color: white; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; margin-left: 8px; }
         @media (max-width: 480px) { .chat-popup { width: 100%; height: 100%; bottom: 0; right: 0; border-radius: 0; max-height: 100vh; } }
+
+
+        .navbar {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+            padding: 15px 0;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .navbar-brand {
+            font-weight: 800;
+            font-size: 1.6rem;
+            color: var(--primary) !important;
+            letter-spacing: -0.5px;
+        }
+        
+        .navbar-brand i {
+            color: var(--secondary);
+        }
+
+        .nav-link {
+            color: var(--text-body) !important;
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin: 0 8px;
+            transition: color 0.2s;
+            position: relative;
+        }
+
+        .nav-link:hover {
+            color: var(--primary) !important;
+        }
+        
+        .nav-link.active {
+            color: var(--primary) !important;
+        }
+
+        .btn-outline-primary {
+            border-color: var(--primary);
+            color: var(--primary);
+            border-radius: 50px;
+            padding: 8px 20px;
+        }
+        
+        .btn-outline-primary:hover {
+            background-color: var(--primary);
+            color: white;
+        }
     </style>
 </head>
 <body>
 
     <div class="progress-container"><div class="progress-bar" id="myBar"></div></div>
 
-    <nav class="navbar sticky-top">
+    <!-- <nav class="navbar sticky-top">
         <div class="container">
             <a class="navbar-brand" href="{{ url_for('dashboard') }}"><i class="fas fa-newspaper me-2"></i>True Bayan</a>
             <a href="{{ url_for('dashboard') }}" class="btn btn-back" onclick="stopAudio()">
                 <i class="fas fa-times"></i> Close
             </a>
         </div>
-    </nav>
+    </nav> -->
+    <nav class="navbar navbar-expand-lg sticky-top">
+            <div class="container">
+                <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+                    <i class="fas fa-newspaper me-2"></i>True Bayan
+                </a>
+                <button class="navbar-toggler border-0" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="fas fa-bars text-dark"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav ms-auto align-items-center">
+                        <li class="nav-item"><a class="nav-link active"
+                                href="{{ url_for('dashboard') }}">Home</a></li>
+                        <li class="nav-item"><a class="nav-link"
+                                href="{{ url_for('saved') }}">Saved</a></li>
+                        <li class="nav-item"><a class="nav-link"
+                                href="{{ url_for('fake_news_tracker') }}">Fake
+                                News Tracker</a></li>
+                        <li class="nav-item"><a class="nav-link"
+                                href="{{ url_for('history') }}">History</a></li>
+                        <li class="nav-item"><a class="nav-link"
+                                href="{{ url_for('preferences') }}">Preferences</a></li>
+                        <!-- <li class="nav-item ms-lg-3">
+                            <a class="btn btn-outline-primary btn-sm"
+                                href="{{ url_for('logout') }}">
+                                <i class="fas fa-sign-out-alt me-1"></i> Logout
+                            </a>
+                        </li> -->
+                        <li class="nav-item ms-lg-3">
+                            <a href="{{ url_for('dashboard') }}" class="btn btn-back" onclick="stopAudio()">
+                <i class="fas fa-times"></i> Close
+            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
 
     <div class="article-wrapper">
         <header class="article-header">

@@ -1,7 +1,8 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
 from newsapi import NewsApiClient
 from deep_translator import GoogleTranslator
-import mysql.connector
+from pymongo import MongoClient
+from bson.objectid import ObjectId
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import os
@@ -9,7 +10,6 @@ from bs4 import BeautifulSoup
 import requests
 from urllib.parse import urlparse
 from textblob import TextBlob  # AI Library
-from deep_translator import GoogleTranslator
 from gtts import gTTS
 from io import BytesIO
 from flask import send_file
@@ -20,14 +20,13 @@ app.secret_key = "secret123"
 # ---------- CONFIG ----------
 newsapi = NewsApiClient(api_key="bd5ad62242af4fd190e21d01df52b53a")
 
-# ---------- MYSQL CONNECTION ----------
+# ---------- MONGODB CONNECTION ----------
+# Global client to handle connection pooling
+client = MongoClient("mongodb://localhost:27017/")
+db = client["truebayan"]
+
 def get_db():
-    return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database="truebayan"
-    )
+    return db
 
 # ---------- FUNCTIONS ----------
 
@@ -35,7 +34,7 @@ def get_db():
 def attach_social_data(articles, current_user_id=None):
     """
     Takes a list of NewsAPI articles and adds 'likes', 'saves', 
-    'user_liked', and 'user_saved' properties from the local DB.
+    'user_liked', and 'user_saved' properties from the MongoDB.
     """
     if not articles:
         return []
@@ -46,19 +45,24 @@ def attach_social_data(articles, current_user_id=None):
     if not urls:
         return articles
 
-    conn = get_db()
-    cursor = conn.cursor()
-
-    # Prepare SQL placeholders
-    format_strings = ','.join(['%s'] * len(urls))
+    db = get_db()
 
     # 1. Get Global Like Counts
-    cursor.execute(f"SELECT article_url, COUNT(*) FROM article_likes WHERE article_url IN ({format_strings}) GROUP BY article_url", urls)
-    like_counts = dict(cursor.fetchall())
+    # SQL: SELECT article_url, COUNT(*) ... GROUP BY article_url
+    like_pipeline = [
+        {"$match": {"article_url": {"$in": urls}}},
+        {"$group": {"_id": "$article_url", "count": {"$sum": 1}}}
+    ]
+    like_results = list(db.article_likes.aggregate(like_pipeline))
+    like_counts = {item['_id']: item['count'] for item in like_results}
 
     # 2. Get Global Save Counts
-    cursor.execute(f"SELECT url, COUNT(*) FROM saved_articles WHERE url IN ({format_strings}) GROUP BY url", urls)
-    save_counts = dict(cursor.fetchall())
+    save_pipeline = [
+        {"$match": {"url": {"$in": urls}}},
+        {"$group": {"_id": "$url", "count": {"$sum": 1}}}
+    ]
+    save_results = list(db.saved_articles.aggregate(save_pipeline))
+    save_counts = {item['_id']: item['count'] for item in save_results}
 
     # 3. Check User Specific Actions (if logged in)
     user_likes = set()
@@ -66,15 +70,18 @@ def attach_social_data(articles, current_user_id=None):
     
     if current_user_id:
         # Check likes
-        cursor.execute(f"SELECT article_url FROM article_likes WHERE user_id = %s AND article_url IN ({format_strings})", [current_user_id] + urls)
-        user_likes = set(row[0] for row in cursor.fetchall())
+        liked_docs = db.article_likes.find(
+            {"user_id": ObjectId(current_user_id), "article_url": {"$in": urls}},
+            {"article_url": 1}
+        )
+        user_likes = set(doc['article_url'] for doc in liked_docs)
         
         # Check saves
-        cursor.execute(f"SELECT url FROM saved_articles WHERE user_id = %s AND url IN ({format_strings})", [current_user_id] + urls)
-        user_saves = set(row[0] for row in cursor.fetchall())
-
-    cursor.close()
-    conn.close()
+        saved_docs = db.saved_articles.find(
+            {"user_id": ObjectId(current_user_id), "url": {"$in": urls}},
+            {"url": 1}
+        )
+        user_saves = set(doc['url'] for doc in saved_docs)
 
     # Attach data to article objects
     for a in articles:
@@ -319,26 +326,26 @@ def toggle_like():
     if not url:
         return jsonify({"status": "error", "message": "URL is required"}), 400
 
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
+    db = get_db()
     
-    try:
-        # Check if already liked
-        cursor.execute("SELECT id FROM article_likes WHERE user_id = %s AND article_url = %s", (user_id, url))
-        liked = cursor.fetchone()
+    # Check if already liked
+    existing_like = db.article_likes.find_one({
+        "user_id": ObjectId(user_id),
+        "article_url": url
+    })
+    
+    if existing_like:
+        db.article_likes.delete_one({"_id": existing_like['_id']})
+        action = "unliked"
+    else:
+        db.article_likes.insert_one({
+            "user_id": ObjectId(user_id),
+            "article_url": url,
+            "created_at": datetime.now()
+        })
+        action = "liked"
         
-        if liked:
-            cursor.execute("DELETE FROM article_likes WHERE id = %s", (liked['id'],))
-            action = "unliked"
-        else:
-            cursor.execute("INSERT INTO article_likes (user_id, article_url) VALUES (%s, %s)", (user_id, url))
-            action = "liked"
-            
-        conn.commit()
-        return jsonify({"status": "success", "action": action})
-    finally:
-        cursor.close()
-        conn.close()
+    return jsonify({"status": "success", "action": action})
 
 @app.route("/check_likes", methods=["POST"])
 def check_likes():
@@ -350,17 +357,16 @@ def check_likes():
     if not urls:
         return jsonify({"liked_urls": []})
 
-    conn = get_db()
-    cursor = conn.cursor()
+    db = get_db()
     
-    format_strings = ','.join(['%s'] * len(urls))
-    query = f"SELECT article_url FROM article_likes WHERE user_id = %s AND article_url IN ({format_strings})"
+    # Find likes matching user and list of URLs
+    likes = db.article_likes.find({
+        "user_id": ObjectId(user_id),
+        "article_url": {"$in": urls}
+    })
     
-    cursor.execute(query, [user_id] + urls)
-    liked_urls = [row[0] for row in cursor.fetchall()]
+    liked_urls = [like['article_url'] for like in likes]
     
-    cursor.close()
-    conn.close()
     return jsonify({"liked_urls": liked_urls})
 
 # ---------- SUMMARIZER API ----------
@@ -402,33 +408,25 @@ def toggle_save():
     
     title = request.json.get('title')
     url = request.json.get('url')
+    user_id = session['user_id']
     
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
+    db = get_db()
     
-    cursor.execute(
-        "SELECT id FROM saved_articles WHERE user_id = %s AND url = %s",
-        (session['user_id'], url)
-    )
-    existing = cursor.fetchone()
+    existing = db.saved_articles.find_one({
+        "user_id": ObjectId(user_id),
+        "url": url
+    })
     
     if existing:
-        cursor.execute(
-            "DELETE FROM saved_articles WHERE id = %s",
-            (existing['id'],)
-        )
-        conn.commit()
-        cursor.close()
-        conn.close()
+        db.saved_articles.delete_one({"_id": existing['_id']})
         return jsonify({"status": "success", "action": "unsaved", "message": "Removed from saved"})
     else:
-        cursor.execute(
-            "INSERT INTO saved_articles (user_id, title, url) VALUES (%s, %s, %s)",
-            (session['user_id'], title, url)
-        )
-        conn.commit()
-        cursor.close()
-        conn.close()
+        db.saved_articles.insert_one({
+            "user_id": ObjectId(user_id),
+            "title": title,
+            "url": url,
+            "saved_at": datetime.now()
+        })
         return jsonify({"status": "success", "action": "saved", "message": "Added to saved"})
 
 @app.route("/check_saved", methods=["POST"])
@@ -438,17 +436,13 @@ def check_saved():
     
     url = request.json.get('url')
     
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id FROM saved_articles WHERE user_id = %s AND url = %s",
-        (session['user_id'], url)
-    )
-    is_saved = cursor.fetchone() is not None
-    cursor.close()
-    conn.close()
+    db = get_db()
+    is_saved = db.saved_articles.find_one({
+        "user_id": ObjectId(session['user_id']),
+        "url": url
+    })
     
-    return jsonify({"saved": is_saved})
+    return jsonify({"saved": is_saved is not None})
 
 # ---------- USER STATS ENDPOINT (NEW) ----------
 @app.route("/get_user_stats")
@@ -456,17 +450,11 @@ def get_user_stats():
     if 'user_id' not in session:
         return jsonify({"saved_count": 0, "liked_count": 0})
     
-    conn = get_db()
-    cursor = conn.cursor()
+    db = get_db()
+    user_id_obj = ObjectId(session['user_id'])
     
-    cursor.execute("SELECT COUNT(*) FROM saved_articles WHERE user_id = %s", (session['user_id'],))
-    saved_count = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM article_likes WHERE user_id = %s", (session['user_id'],))
-    liked_count = cursor.fetchone()[0]
-    
-    cursor.close()
-    conn.close()
+    saved_count = db.saved_articles.count_documents({"user_id": user_id_obj})
+    liked_count = db.article_likes.count_documents({"user_id": user_id_obj})
     
     return jsonify({"saved_count": saved_count, "liked_count": liked_count})
 
@@ -484,10 +472,8 @@ def read_article():
         flash("No article URL provided", "danger")
         return redirect(url_for('dashboard'))
     
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM article_cache WHERE url = %s", (url,))
-    cached = cursor.fetchone()
+    db = get_db()
+    cached = db.article_cache.find_one({"url": url})
     
     if cached:
         article = cached
@@ -507,27 +493,22 @@ def read_article():
             
             category = detect_category(title, content[:500])
             
-            cursor.execute(
-                "INSERT INTO article_cache (url, title, content, image_url, category) VALUES (%s, %s, %s, %s, %s)",
-                (url, title, content, image_url, category)
-            )
-            conn.commit()
-            
-            article = {
-                'title': title,
-                'content': content,
-                'image_url': image_url,
-                'url': url,
-                'category': category
+            article_doc = {
+                "url": url,
+                "title": title,
+                "content": content,
+                "image_url": image_url,
+                "category": category,
+                "cached_at": datetime.now()
             }
+            
+            db.article_cache.insert_one(article_doc)
+            
+            article = article_doc
+            
         except Exception as e:
             flash(f"Could not load article. Opening original link...", "warning")
-            cursor.close()
-            conn.close()
             return redirect(url)
-    
-    cursor.close()
-    conn.close()
     
     save_reading_history(session['user_id'], article['title'], url)
     
@@ -564,49 +545,57 @@ def submit_fake_url():
         
         label, confidence, ai_score, reasons = detect_fake_news_advanced(full_text_to_analyze, url)
         
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute(
-            """INSERT INTO fake_news_reports 
-            (user_id, article_url, article_title, source_url, detection_label, 
-             confidence_score, ai_score, reasons) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-            (session['user_id'], url, title, url, label, confidence, ai_score, '; '.join(reasons))
-        )
-        conn.commit()
+        db = get_db()
+        
+        # Insert Report
+        db.fake_news_reports.insert_one({
+            "user_id": ObjectId(session['user_id']),
+            "article_url": url,
+            "article_title": title,
+            "source_url": url,
+            "detection_label": label,
+            "confidence_score": confidence,
+            "ai_score": ai_score,
+            "reasons": '; '.join(reasons),
+            "reported_at": datetime.now()
+        })
         
         try:
             domain = urlparse(url).netloc
         except:
             domain = url
         
-        cursor.execute(
-            "SELECT * FROM fake_news_sources WHERE domain = %s",
-            (domain,)
-        )
-        source = cursor.fetchone()
+        # Update Source
+        source = db.fake_news_sources.find_one({"domain": domain})
         
         if source:
-            cursor.execute(
-                """UPDATE fake_news_sources 
-                SET report_count = report_count + 1,
-                    total_confidence = total_confidence + %s,
-                    avg_confidence = (total_confidence + %s) / (report_count + 1),
-                    last_reported = NOW()
-                WHERE domain = %s""",
-                (confidence, confidence, domain)
+            # We need to calculate new average.
+            # Avg = (Total + New) / (Count + 1)
+            new_total = source.get('total_confidence', 0) + confidence
+            new_count = source.get('report_count', 0) + 1
+            new_avg = new_total / new_count
+            
+            db.fake_news_sources.update_one(
+                {"domain": domain},
+                {
+                    "$set": {
+                        "report_count": new_count,
+                        "total_confidence": new_total,
+                        "avg_confidence": new_avg,
+                        "last_reported": datetime.now()
+                    }
+                }
             )
         else:
-            cursor.execute(
-                """INSERT INTO fake_news_sources 
-                (source_url, domain, report_count, total_confidence, avg_confidence) 
-                VALUES (%s, %s, 1, %s, %s)""",
-                (url, domain, confidence, confidence)
-            )
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
+            db.fake_news_sources.insert_one({
+                "source_url": url,
+                "domain": domain,
+                "report_count": 1,
+                "total_confidence": confidence,
+                "avg_confidence": confidence,
+                "last_reported": datetime.now(),
+                "is_blacklisted": 0  # Default value
+            })
         
         return jsonify({
             "status": "success",
@@ -627,15 +616,10 @@ def chatbot_page():
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute(
-        "SELECT * FROM chatbot_conversations WHERE user_id = %s ORDER BY created_at DESC LIMIT 20",
-        (session['user_id'],)
-    )
-    conversations = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    db = get_db()
+    conversations = list(db.chatbot_conversations.find(
+        {"user_id": ObjectId(session['user_id'])}
+    ).sort("created_at", -1).limit(20))
     
     return render_template('chatbot.html', conversations=list(reversed(conversations)), username=session.get('username'))
 
@@ -668,26 +652,20 @@ def chat():
     else:
         response = "I can help you with:\n\n• News browsing\n• Fake news detection\n• Saving articles\n• App navigation\n• Setting preferences\n\nCould you please ask about a specific topic?"
     
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO chatbot_conversations (user_id, message, response) VALUES (%s, %s, %s)",
-        (session['user_id'], message, response)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    db = get_db()
+    db.chatbot_conversations.insert_one({
+        "user_id": ObjectId(session['user_id']),
+        "message": message,
+        "response": response,
+        "created_at": datetime.now()
+    })
     
     return jsonify({"response": response})
 
 # ---------- USER PREFERENCES ----------
 def get_user_preferences(user_id):
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM user_preferences WHERE user_id = %s", (user_id,))
-    prefs = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    db = get_db()
+    prefs = db.user_preferences.find_one({"user_id": ObjectId(user_id)})
     return prefs
 
 def get_personalized_news(user_id):
@@ -739,15 +717,13 @@ def get_personalized_news(user_id):
         return get_recommended_news()
 
 def save_reading_history(user_id, article_title, article_url):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO reading_history (user_id, article_title, article_url, read_at) VALUES (%s, %s, %s, %s)",
-        (user_id, article_title, article_url, datetime.now())
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    db = get_db()
+    db.reading_history.insert_one({
+        "user_id": ObjectId(user_id),
+        "article_title": article_title,
+        "article_url": article_url,
+        "read_at": datetime.now()
+    })
 
 def get_latest_news(user_id=None):
     latest = newsapi.get_everything(
@@ -800,33 +776,25 @@ def register():
         email = request.form.get("email")
         password = request.form.get("password")
         
-        conn = get_db()
-        cursor = conn.cursor()
+        db = get_db()
         
-        cursor.execute("SELECT * FROM users WHERE email = %s OR username = %s", (email, username))
-        if cursor.fetchone():
+        if db.users.find_one({"$or": [{"email": email}, {"username": username}]}):
             flash("User already exists!", "danger")
-            cursor.close()
-            conn.close()
             return redirect(url_for('register'))
         
         hashed_password = generate_password_hash(password)
-        cursor.execute(
-            "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
-            (username, email, hashed_password)
-        )
-        conn.commit()
         
-        user_id = cursor.lastrowid
+        result = db.users.insert_one({
+            "username": username,
+            "email": email,
+            "password": hashed_password,
+            "created_at": datetime.now(),
+            "is_admin": 0 
+        })
         
-        cursor.execute(
-            "INSERT INTO user_preferences (user_id) VALUES (%s)",
-            (user_id,)
-        )
-        conn.commit()
+        user_id = result.inserted_id
         
-        cursor.close()
-        conn.close()
+        db.user_preferences.insert_one({"user_id": user_id})
         
         flash("Registration successful! Please login.", "success")
         return redirect(url_for('login'))
@@ -842,15 +810,12 @@ def login():
         email = request.form.get("email")
         password = request.form.get("password")
         
-        conn = get_db()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-        user = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        db = get_db()
+        user = db.users.find_one({"email": email})
         
         if user and check_password_hash(user['password'], password):
-            session['user_id'] = user['id']
+            # MongoDB stores _id as ObjectId, need to cast to str for session
+            session['user_id'] = str(user['_id'])
             session['username'] = user['username']
             flash("Login successful!", "success")
             return redirect(url_for('dashboard'))
@@ -1044,43 +1009,27 @@ def preferences():
         return redirect(url_for('landing'))
     
     if request.method == "POST":
-        conn = get_db()
-        cursor = conn.cursor()
+        db = get_db()
         
-        cursor.execute("""
-            UPDATE user_preferences SET
-                category_politics = %s,
-                category_business = %s,
-                category_technology = %s,
-                category_sports = %s,
-                category_entertainment = %s,
-                category_health = %s,
-                category_education = %s,
-                category_environment = %s,
-                category_crime = %s,
-                category_weather = %s,
-                category_lifestyle = %s,
-                category_food = %s
-            WHERE user_id = %s
-        """, (
-            1 if request.form.get('politics') else 0,
-            1 if request.form.get('business') else 0,
-            1 if request.form.get('technology') else 0,
-            1 if request.form.get('sports') else 0,
-            1 if request.form.get('entertainment') else 0,
-            1 if request.form.get('health') else 0,
-            1 if request.form.get('education') else 0,
-            1 if request.form.get('environment') else 0,
-            1 if request.form.get('crime') else 0,
-            1 if request.form.get('weather') else 0,
-            1 if request.form.get('lifestyle') else 0,
-            1 if request.form.get('food') else 0,
-            session['user_id']
-        ))
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
+        update_fields = {
+            "category_politics": 1 if request.form.get('politics') else 0,
+            "category_business": 1 if request.form.get('business') else 0,
+            "category_technology": 1 if request.form.get('technology') else 0,
+            "category_sports": 1 if request.form.get('sports') else 0,
+            "category_entertainment": 1 if request.form.get('entertainment') else 0,
+            "category_health": 1 if request.form.get('health') else 0,
+            "category_education": 1 if request.form.get('education') else 0,
+            "category_environment": 1 if request.form.get('environment') else 0,
+            "category_crime": 1 if request.form.get('crime') else 0,
+            "category_weather": 1 if request.form.get('weather') else 0,
+            "category_lifestyle": 1 if request.form.get('lifestyle') else 0,
+            "category_food": 1 if request.form.get('food') else 0
+        }
+
+        db.user_preferences.update_one(
+            {"user_id": ObjectId(session['user_id'])},
+            {"$set": update_fields}
+        )
         
         flash("Preferences updated successfully!", "success")
         return redirect(url_for('dashboard'))
@@ -1096,27 +1045,22 @@ def save_article():
     title = request.form["title"]
     url = request.form["url"]
 
-    conn = get_db()
-    cursor = conn.cursor()
+    db = get_db()
 
-    cursor.execute(
-        "SELECT * FROM saved_articles WHERE user_id = %s AND url = %s",
-        (session['user_id'], url)
-    )
+    existing = db.saved_articles.find_one({
+        "user_id": ObjectId(session['user_id']),
+        "url": url
+    })
     
-    if cursor.fetchone():
-        cursor.close()
-        conn.close()
+    if existing:
         return jsonify({"status": "info", "message": "Already saved!"})
 
-    cursor.execute(
-        "INSERT INTO saved_articles (user_id, title, url) VALUES (%s, %s, %s)",
-        (session['user_id'], title, url)
-    )
-
-    conn.commit()
-    cursor.close()
-    conn.close()
+    db.saved_articles.insert_one({
+        "user_id": ObjectId(session['user_id']),
+        "title": title,
+        "url": url,
+        "saved_at": datetime.now()
+    })
 
     return jsonify({"status": "success", "message": "Saved!"})
 
@@ -1125,30 +1069,10 @@ def saved():
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    
-    try:
-        cursor.execute(
-            "SELECT * FROM saved_articles WHERE user_id = %s ORDER BY saved_at DESC",
-            (session['user_id'],)
-        )
-        articles = cursor.fetchall()
-    except mysql.connector.Error as err:
-        if err.errno == 1054:
-            cursor.execute(
-                "SELECT * FROM saved_articles WHERE user_id = %s ORDER BY id DESC",
-                (session['user_id'],)
-            )
-            articles = cursor.fetchall()
-            from datetime import datetime
-            for article in articles:
-                article['saved_at'] = datetime.now()
-        else:
-            raise
-    
-    cursor.close()
-    conn.close()
+    db = get_db()
+    articles = list(db.saved_articles.find(
+        {"user_id": ObjectId(session['user_id'])}
+    ).sort("saved_at", -1))
     
     return render_template("saved.html", articles=articles, username=session.get('username'))
 
@@ -1159,20 +1083,13 @@ def delete_saved():
     
     article_id = request.json.get('article_id')
     
-    conn = get_db()
-    cursor = conn.cursor()
+    db = get_db()
+    result = db.saved_articles.delete_one({
+        "_id": ObjectId(article_id),
+        "user_id": ObjectId(session['user_id'])
+    })
     
-    cursor.execute(
-        "DELETE FROM saved_articles WHERE id = %s AND user_id = %s",
-        (article_id, session['user_id'])
-    )
-    
-    conn.commit()
-    deleted = cursor.rowcount > 0
-    cursor.close()
-    conn.close()
-    
-    if deleted:
+    if result.deleted_count > 0:
         return jsonify({"status": "success", "message": "Article removed"})
     else:
         return jsonify({"status": "error", "message": "Article not found"}), 404
@@ -1182,15 +1099,10 @@ def history():
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute(
-        "SELECT * FROM reading_history WHERE user_id = %s ORDER BY read_at DESC LIMIT 50",
-        (session['user_id'],)
-    )
-    history = cursor.fetchall()
-    cursor.close()
-    conn.close()
+    db = get_db()
+    history = list(db.reading_history.find(
+        {"user_id": ObjectId(session['user_id'])}
+    ).sort("read_at", -1).limit(50))
     
     return render_template("history.html", history=history, username=session.get('username'))
 
@@ -1217,17 +1129,19 @@ def report_fake():
     
     label, confidence, ai_score, reasons = detect_fake_news_advanced(description, article_url)
     
-    conn = get_db()
-    cursor = conn.cursor()
+    db = get_db()
     
-    cursor.execute(
-        """INSERT INTO fake_news_reports 
-        (user_id, article_url, article_title, source_url, detection_label, 
-         confidence_score, ai_score, reasons) 
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-        (session['user_id'], article_url, article_title, article_url, 
-         label, confidence, ai_score, '; '.join(reasons))
-    )
+    db.fake_news_reports.insert_one({
+        "user_id": ObjectId(session['user_id']),
+        "article_url": article_url,
+        "article_title": article_title,
+        "source_url": article_url,
+        "detection_label": label,
+        "confidence_score": confidence,
+        "ai_score": ai_score,
+        "reasons": '; '.join(reasons),
+        "reported_at": datetime.now()
+    })
     
     from urllib.parse import urlparse
     try:
@@ -1235,33 +1149,34 @@ def report_fake():
     except:
         domain = article_url
     
-    cursor.execute(
-        "SELECT * FROM fake_news_sources WHERE source_url = %s OR domain = %s",
-        (article_url, domain)
-    )
-    source = cursor.fetchone()
+    source = db.fake_news_sources.find_one({"domain": domain})
     
     if source:
-        cursor.execute(
-            """UPDATE fake_news_sources 
-            SET report_count = report_count + 1,
-                total_confidence = total_confidence + %s,
-                avg_confidence = (total_confidence + %s) / (report_count + 1),
-                last_reported = NOW()
-            WHERE domain = %s""",
-            (confidence, confidence, domain)
+        new_total = source.get('total_confidence', 0) + confidence
+        new_count = source.get('report_count', 0) + 1
+        new_avg = new_total / new_count
+        
+        db.fake_news_sources.update_one(
+            {"domain": domain},
+            {
+                "$set": {
+                    "report_count": new_count,
+                    "total_confidence": new_total,
+                    "avg_confidence": new_avg,
+                    "last_reported": datetime.now()
+                }
+            }
         )
     else:
-        cursor.execute(
-            """INSERT INTO fake_news_sources 
-            (source_url, domain, report_count, total_confidence, avg_confidence) 
-            VALUES (%s, %s, 1, %s, %s)""",
-            (article_url, domain, confidence, confidence)
-        )
-    
-    conn.commit()
-    cursor.close()
-    conn.close()
+        db.fake_news_sources.insert_one({
+            "source_url": article_url,
+            "domain": domain,
+            "report_count": 1,
+            "total_confidence": confidence,
+            "avg_confidence": confidence,
+            "last_reported": datetime.now(),
+            "is_blacklisted": 0
+        })
     
     return jsonify({
         "status": "success",
@@ -1276,36 +1191,24 @@ def fake_news_tracker():
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
+    db = get_db()
     
-    cursor.execute(
-        """SELECT * FROM fake_news_reports 
-        ORDER BY reported_at DESC LIMIT 50"""
-    )
-    recent_reports = cursor.fetchall()
+    recent_reports = list(db.fake_news_reports.find().sort("reported_at", -1).limit(50))
     
-    cursor.execute(
-        """SELECT * FROM fake_news_sources 
-        ORDER BY report_count DESC, avg_confidence DESC 
-        LIMIT 20"""
-    )
-    trending_sources = cursor.fetchall()
+    trending_sources = list(db.fake_news_sources.find().sort([
+        ("report_count", -1), 
+        ("avg_confidence", -1)
+    ]).limit(20))
     
-    cursor.execute("SELECT COUNT(*) as total FROM fake_news_reports")
-    total_reports = cursor.fetchone()['total']
+    total_reports = db.fake_news_reports.count_documents({})
     
-    cursor.execute("SELECT AVG(confidence_score) as avg FROM fake_news_reports")
-    avg_confidence = cursor.fetchone()['avg'] or 0
+    # Calculate average confidence
+    avg_result = list(db.fake_news_reports.aggregate([
+        {"$group": {"_id": None, "avg": {"$avg": "$confidence_score"}}}
+    ]))
+    avg_confidence = avg_result[0]['avg'] if avg_result else 0
     
-    cursor.execute(
-        """SELECT COUNT(*) as high_risk FROM fake_news_reports 
-        WHERE confidence_score >= 70"""
-    )
-    high_risk_count = cursor.fetchone()['high_risk']
-    
-    cursor.close()
-    conn.close()
+    high_risk_count = db.fake_news_reports.count_documents({"confidence_score": {"$gte": 70}})
     
     return render_template(
         "fake_news_tracker.html",
@@ -1322,48 +1225,54 @@ def admin_dashboard():
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
-    conn = get_db()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT is_admin FROM users WHERE id = %s", (session['user_id'],))
-    user = cursor.fetchone()
+    db = get_db()
+    user = db.users.find_one({"_id": ObjectId(session['user_id'])})
     
     if not user or not user.get('is_admin'):
         flash("Access denied. Admin privileges required.", "danger")
-        cursor.close()
-        conn.close()
         return redirect(url_for('dashboard'))
     
-    cursor.execute("SELECT id, username, email, created_at FROM users ORDER BY created_at DESC")
-    users = cursor.fetchall()
+    users = list(db.users.find().sort("created_at", -1))
     
-    cursor.execute(
-        """SELECT fnr.*, u.username 
-        FROM fake_news_reports fnr 
-        JOIN users u ON fnr.user_id = u.id 
-        ORDER BY reported_at DESC"""
-    )
-    all_reports = cursor.fetchall()
+    # Simulating the Join for reports and users
+    # In MongoDB, we use aggregation $lookup for joins
+    pipeline = [
+        {
+            "$lookup": {
+                "from": "users",
+                "localField": "user_id",
+                "foreignField": "_id",
+                "as": "user_info"
+            }
+        },
+        {"$unwind": "$user_info"},
+        {"$sort": {"reported_at": -1}},
+        {
+            "$project": {
+                "user_id": 1,
+                "article_url": 1,
+                "article_title": 1,
+                "source_url": 1,
+                "detection_label": 1,
+                "confidence_score": 1,
+                "ai_score": 1,
+                "reasons": 1,
+                "reported_at": 1,
+                "username": "$user_info.username"
+            }
+        }
+    ]
+    all_reports = list(db.fake_news_reports.aggregate(pipeline))
     
-    cursor.execute(
-        """SELECT * FROM fake_news_sources 
-        ORDER BY report_count DESC, avg_confidence DESC"""
-    )
-    all_sources = cursor.fetchall()
+    all_sources = list(db.fake_news_sources.find().sort([
+        ("report_count", -1), 
+        ("avg_confidence", -1)
+    ]))
     
-    cursor.execute("SELECT COUNT(*) as total FROM users")
-    total_users = cursor.fetchone()['total']
-    
-    cursor.execute("SELECT COUNT(*) as total FROM fake_news_reports")
-    total_reports = cursor.fetchone()['total']
-    
-    cursor.execute("SELECT COUNT(*) as total FROM fake_news_sources WHERE is_blacklisted = 1")
-    blacklisted_sources = cursor.fetchone()['total']
-    
-    cursor.execute("SELECT COUNT(*) as total FROM saved_articles")
-    total_saved = cursor.fetchone()['total']
-    
-    cursor.close()
-    conn.close()
+    total_users = db.users.count_documents({})
+    total_reports = db.fake_news_reports.count_documents({})
+    blacklisted_sources = db.fake_news_sources.count_documents({"is_blacklisted": 1})
+    total_saved = db.saved_articles.count_documents({})
     
     return render_template(
         "admin_dashboard.html",
@@ -1385,23 +1294,14 @@ def blacklist_source():
     source_id = request.json.get('source_id')
     action = request.json.get('action') 
     
-    conn = get_db()
-    cursor = conn.cursor()
+    db = get_db()
     
-    if action == 'blacklist':
-        cursor.execute(
-            "UPDATE fake_news_sources SET is_blacklisted = 1 WHERE id = %s",
-            (source_id,)
-        )
-    else:
-        cursor.execute(
-            "UPDATE fake_news_sources SET is_blacklisted = 0 WHERE id = %s",
-            (source_id,)
-        )
+    update_val = 1 if action == 'blacklist' else 0
     
-    conn.commit()
-    cursor.close()
-    conn.close()
+    db.fake_news_sources.update_one(
+        {"_id": ObjectId(source_id)},
+        {"$set": {"is_blacklisted": update_val}}
+    )
     
     return jsonify({"status": "success"})
 
