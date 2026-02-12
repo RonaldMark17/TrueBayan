@@ -206,11 +206,11 @@ def detect_fake_news_advanced(text, url=""):
         confidence = min(100, confidence + 10)
 
     # Determine Label based on Risk
-    if final_risk >= 75:
+    if final_risk >= 80:
         label = "FAKE"
-    elif final_risk >= 60:
+    elif final_risk >= 70:
         label = "SUSPICIOUS"
-    elif final_risk >= 40:
+    elif final_risk >= 50:
         label = "VERIFY"
     else:
         label = "CREDIBLE"
@@ -1188,31 +1188,49 @@ def report_fake():
 
 @app.route("/fake_news_tracker")
 def fake_news_tracker():
+    # 1. Security Check
     if 'user_id' not in session:
         return redirect(url_for('landing'))
     
     db = get_db()
     
-    recent_reports = list(db.fake_news_reports.find().sort("reported_at", -1).limit(50))
+    # 2. Get the current user's ID object
+    user_id_obj = ObjectId(session['user_id'])
     
+    # 3. GET USER'S HISTORY (The Fix)
+    # We add {"user_id": user_id_obj} to the find() query.
+    # This ensures we only fetch reports created by this specific account.
+    recent_reports = list(db.fake_news_reports.find(
+        {"user_id": user_id_obj} 
+    ).sort("reported_at", -1).limit(50))
+    
+    # 4. Global Trends (Optional: Keep this global to show what's viral)
+    # If you want this to be user-only too, add the {"user_id": user_id_obj} filter here as well.
     trending_sources = list(db.fake_news_sources.find().sort([
         ("report_count", -1), 
         ("avg_confidence", -1)
     ]).limit(20))
     
-    total_reports = db.fake_news_reports.count_documents({})
+    # 5. User-Specific Statistics
+    # Count only this user's reports
+    total_reports = db.fake_news_reports.count_documents({"user_id": user_id_obj})
     
-    # Calculate average confidence
+    # Calculate average confidence for THIS user only
     avg_result = list(db.fake_news_reports.aggregate([
+        {"$match": {"user_id": user_id_obj}},
         {"$group": {"_id": None, "avg": {"$avg": "$confidence_score"}}}
     ]))
     avg_confidence = avg_result[0]['avg'] if avg_result else 0
     
-    high_risk_count = db.fake_news_reports.count_documents({"confidence_score": {"$gte": 70}})
+    # Count high risk links found by THIS user
+    high_risk_count = db.fake_news_reports.count_documents({
+        "user_id": user_id_obj, 
+        "confidence_score": {"$gte": 70}
+    })
     
     return render_template(
         "fake_news_tracker.html",
-        recent_reports=recent_reports,
+        recent_reports=recent_reports,   # Now contains ONLY user's history
         trending_sources=trending_sources,
         total_reports=total_reports,
         avg_confidence=round(avg_confidence, 1),
